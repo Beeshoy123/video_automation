@@ -215,8 +215,14 @@
       <div class="dialog-heading"><div><p class="eyebrow">NEW GENERATION JOB</p><h2>Create a video</h2></div><button type="button" class="close-button" data-close>×</button></div>
       <label><span>Topic <small>optional—leave blank for agent selection</small></span><input name="topic" maxlength="200" placeholder="How small teams can automate repetitive work"></label>
       <div class="form-grid two">
-        <label><span>Format</span><select name="style"><option value="explainer">Explainer</option><option value="tutorial">Tutorial</option><option value="list">List</option><option value="review">Review</option><option value="story">Story</option></select></label>
+        <label><span>Format</span><select name="style"><option value="explainer">Explainer</option><option value="tutorial">Tutorial</option><option value="list">List</option><option value="review">Review</option><option value="story">Story</option><option value="cartoon">Original cartoon</option></select></label>
         <label><span>Length</span><select name="length"><option value="short">Short · 2–4 min</option><option value="medium" selected>Medium · 8–12 min</option><option value="long">Long · 15–20 min</option></select></label>
+      </div>
+      <div class="form-grid two">
+        <label><span>Main character <small>optional</small></span><input name="character" maxlength="300" placeholder="A curious blue fox who explains things"></label>
+        <label><span>Cartoon visual style</span><input name="visualStyle" maxlength="200" value="original handcrafted 3D cartoon"></label>
+        <label><span>Storyboard scenes</span><select name="sceneCount"><option value="6">6 scenes</option><option value="8" selected>8 scenes</option><option value="10">10 scenes</option></select></label>
+        <label><span>Voice direction</span><input name="voiceDirection" maxlength="300" placeholder="Warm, friendly narrator"></label>
       </div>
       <p class="callout">Generation runs in the background. You can follow each stage and cancel between stages.</p>
       <div class="form-actions"><button type="submit" class="button primary">Start generation</button><button type="button" class="button ghost" data-close>Cancel</button></div>

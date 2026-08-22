@@ -35,23 +35,27 @@ class DailyAutomation {
       }, { scheduled: false })
     );
 
-    // Publishing queue processing every 15 minutes
-    this.scheduledTasks.set('publish-queue-processing',
-      cron.schedule('*/15 * * * *', async () => {
-        if (this.isEnabled) {
-          await this.processPublishQueue();
-        }
-      }, { scheduled: false })
-    );
+    if (this.agents.publishing) {
+      // Publishing queue processing every 15 minutes
+      this.scheduledTasks.set('publish-queue-processing',
+        cron.schedule('*/15 * * * *', async () => {
+          if (this.isEnabled) {
+            await this.processPublishQueue();
+          }
+        }, { scheduled: false })
+      );
+    }
 
-    // Analytics collection at 9:00 AM daily
-    this.scheduledTasks.set('daily-analytics',
-      cron.schedule('0 9 * * *', async () => {
-        if (this.isEnabled) {
-          await this.collectDailyAnalytics();
-        }
-      }, { scheduled: false })
-    );
+    if (this.agents.analytics) {
+      // Analytics collection at 9:00 AM daily
+      this.scheduledTasks.set('daily-analytics',
+        cron.schedule('0 9 * * *', async () => {
+          if (this.isEnabled) {
+            await this.collectDailyAnalytics();
+          }
+        }, { scheduled: false })
+      );
+    }
 
     // Weekly strategy review on Sundays at 8:00 AM
     this.scheduledTasks.set('weekly-strategy-review',

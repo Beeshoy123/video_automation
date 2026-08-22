@@ -250,7 +250,8 @@ class YouTubeAutomationAgent {
         'informative',
         'engaging',
         'professional',
-        'ethereal'
+        'ethereal',
+        'cartoon'
       ]);
       const style = body.style.trim();
 
@@ -269,7 +270,7 @@ class YouTubeAutomationAgent {
       if (typeof body.strategyContext !== 'object' || Array.isArray(body.strategyContext)) {
         return { valid: false, status: 400, error: 'strategyContext must be an object' };
       }
-      const limits = { angle: 500, rationale: 1000, audience: 500, objective: 1000, valueProposition: 1000, constraints: 2000 };
+      const limits = { angle: 500, rationale: 1000, audience: 500, objective: 1000, valueProposition: 1000, constraints: 2000, character: 300, visualStyle: 200, sceneCount: 2, voiceDirection: 300 };
       value.strategyContext = {};
       for (const [key, max] of Object.entries(limits)) {
         if (body.strategyContext[key] === undefined || body.strategyContext[key] === null) continue;
@@ -1190,7 +1191,7 @@ class YouTubeAutomationAgent {
     // Step 1: Strategy
     const strategy = await this.runGenerationStage(jobId, 'strategy', 10, async () => {
       const generated = await this.agents.strategy.generateContentStrategy(topic);
-      const contentStyles = new Set(['tutorial', 'explainer', 'list', 'review', 'story']);
+      const contentStyles = new Set(['tutorial', 'explainer', 'list', 'review', 'story', 'cartoon']);
       const requestedStyle = style || profile.default_style || null;
       if (requestedStyle && contentStyles.has(requestedStyle.toLowerCase())) {
         generated.contentType = requestedStyle.charAt(0).toUpperCase() + requestedStyle.slice(1).toLowerCase();

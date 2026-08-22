@@ -41,6 +41,11 @@ class ScriptWriterAgent {
         structure: ['hook', 'setup', 'conflict', 'journey', 'climax', 'resolution', 'lesson', 'cta'],
         tone: 'narrative',
         pacing: 'dynamic'
+      },
+      cartoon: {
+        structure: ['hook', 'setup', 'problem', 'discovery', 'escalation', 'turning_point', 'lesson', 'cta'],
+        tone: 'warm, playful, and easy to understand',
+        pacing: 'visual and dynamic'
       }
     };
   }
@@ -132,6 +137,10 @@ Channel goal: ${strategy.channelGoal || 'help the viewer understand and act'}
 Channel value proposition: ${strategy.channelValueProposition || 'give the viewer practical value'}
 Editorial rationale: ${strategy.planRationale || 'fit the selected topic and audience'}
 Channel constraints: ${strategy.channelConstraints || 'none beyond the factual-safety rules below'}
+Cartoon character: ${strategy.character || 'none'}
+Cartoon visual style: ${strategy.visualStyle || 'none'}
+Storyboard scene count: ${strategy.sceneCount || 'use the natural structure for this format'}
+Voice direction: ${strategy.voiceDirection || 'none'}
 Preferred call to action: ${strategy.callToAction || 'invite the viewer to subscribe'}
 Keywords: ${(strategy.keywords || []).join(', ')}
 Research sources: ${JSON.stringify(strategy.researchSources || [])}

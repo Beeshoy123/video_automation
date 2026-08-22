@@ -154,3 +154,4 @@ The repository ignores `.env`, `.venv/`, `node_modules/`, local databases, logs,
 - The Google Cloud console may advertise a `$300` free trial. Do not click `Start free` or add a payment card if you do not want billing. Dismiss the banner and stop if Google requires a card for the next step.
 - The Google Cloud project created for this setup is `Videoautomation` with project ID `videoautomation-506318`.
 - To use the app with Gemini but without YouTube, the code must be changed to support a local-only mode. Until that change is made, the dashboard remains in setup mode without YouTube OAuth.
+- Local-only cartoon mode is enabled with `LOCAL_ONLY_MODE=true`. Choose `Original cartoon` in Create video to provide a character, visual style, scene count, and voice direction; the existing Gemini, scene, narration, captions, and FFmpeg pipeline handles the rest.

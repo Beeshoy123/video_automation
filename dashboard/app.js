@@ -1286,8 +1286,14 @@ $('#resume-operator-run').addEventListener('click', async event => {
 $('#generate-form').addEventListener('submit', async event => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(event.currentTarget));
+  const cartoonContext = values.style === 'cartoon' ? {
+    character: values.character,
+    visualStyle: values.visualStyle,
+    sceneCount: values.sceneCount,
+    voiceDirection: values.voiceDirection
+  } : {};
   try {
-    await mutate('/generate', 'POST', { ...values, topic: values.topic.trim() || null }, 'Generation job started.');
+    await mutate('/generate', 'POST', { ...values, topic: values.topic.trim() || null, strategyContext: cartoonContext }, 'Generation job started.');
     $('#generate-dialog').close();
     event.currentTarget.reset();
   } catch (_error) { /* toast already shown */ }
