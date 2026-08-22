@@ -519,7 +519,7 @@ class CredentialManager {
   getMissingCredentials() {
     const missing = [];
 
-    if (!this.credentials.youtube) {
+    if (!this.credentials.youtube && process.env.LOCAL_ONLY_MODE !== 'true') {
       missing.push('youtube');
     }
 
@@ -546,8 +546,8 @@ class CredentialManager {
       return false;
     }
 
-    // Validate YouTube tokens
-    if (!this.tokens.youtube) {
+    // YouTube OAuth is optional in local-only mode.
+    if (process.env.LOCAL_ONLY_MODE !== 'true' && !this.tokens.youtube) {
       console.log(chalk.yellow('\n⚠️  YouTube authentication required'));
       return false;
     }

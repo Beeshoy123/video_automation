@@ -79,6 +79,7 @@ class YouTubeAutomationAgent {
       // Load credentials
       this.logger.info('Loading credentials...');
       this.credentials = new CredentialManager();
+      this.localOnlyMode = process.env.LOCAL_ONLY_MODE === 'true';
       const credentialsValid = await this.credentials.validateAll();
       this.readiness = new ProductionReadinessService(this.db, this.credentials);
       
@@ -139,9 +140,12 @@ class YouTubeAutomationAgent {
       thumbnailDesigner: new ThumbnailDesignerAgent(this.db, this.credentials),
       seoOptimizer: new SEOOptimizerAgent(this.db, this.credentials),
       production: new ProductionManagementAgent(this.db, this.credentials),
-      publishing: new PublishingSchedulingAgent(this.db, this.credentials),
-      analytics: new AnalyticsOptimizationAgent(this.db, this.credentials)
+      analytics: this.localOnlyMode ? null : new AnalyticsOptimizationAgent(this.db, this.credentials)
     };
+    if (this.localOnlyMode) delete this.agents.analytics;
+    if (!this.localOnlyMode) {
+      this.agents.publishing = new PublishingSchedulingAgent(this.db, this.credentials);
+    }
 
     // Initialize each agent
     for (const [name, agent] of Object.entries(this.agents)) {
@@ -1275,7 +1279,7 @@ class YouTubeAutomationAgent {
       });
 
       let scheduleEntry = null;
-      if (reviewStatus === 'approved') {
+      if (reviewStatus === 'approved' && this.agents.publishing) {
         scheduleEntry = await this.agents.publishing.scheduleContent(productionData);
         await this.db.updateProductionStatus(contentId, scheduleEntry ? 'scheduled' : productionData.status);
       } else {

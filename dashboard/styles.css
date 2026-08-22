@@ -22,7 +22,8 @@ button { color: inherit; }
 .brand { display: flex; gap: 12px; align-items: center; color: var(--text); text-decoration: none; padding: 0 8px 34px; }
 .brand-mark { width: 38px; height: 38px; border-radius: 12px; background: var(--red); display: grid; place-items: center; box-shadow: 0 8px 24px rgba(255,77,94,.22); }
 .brand strong, .brand small { display: block; }
-.brand strong { max-width: 155px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brand > span:last-child { min-width: 0; }
+.brand strong { overflow-wrap: break-word; }
 .brand small { color: var(--muted); font-size: 11px; margin-top: 3px; }
 nav { display: grid; gap: 7px; }
 .nav-item { border: 0; background: transparent; color: var(--muted); text-align: left; padding: 12px 14px; border-radius: 10px; cursor: pointer; display: flex; gap: 12px; align-items: center; }
@@ -309,8 +310,8 @@ label small { color: var(--muted); font-weight: 400; }
   .app-shell { grid-template-columns: minmax(0, 1fr); width: 100%; max-width: 100vw; overflow: hidden; }
   .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 16px; }
   .brand { padding-bottom: 14px; }
-  nav { display: flex; overflow-x: auto; }
-  .nav-item { white-space: nowrap; }
+  nav { display: flex; flex-wrap: wrap; gap: 7px; overflow-x: hidden; }
+  .nav-item { white-space: normal; flex: 1 1 auto; min-width: 0; }
   .sidebar-footer { display: none; }
   main { width: 100%; max-width: 100vw; padding: 0 18px 60px; }
   .loading-bar { left: 0; }
