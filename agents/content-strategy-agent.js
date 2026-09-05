@@ -226,6 +226,119 @@ class ContentStrategyAgent {
       .slice(0, 50);
   }
 
+  async findNicheSignals(input = {}) {
+    const niche = String(input.niche || input.topic || '').trim();
+    const region = input.region || process.env.YOUTUBE_REGION || 'US';
+
+    if (!niche) {
+      return {
+        niche: '',
+        region,
+        summary: 'No niche supplied for trend validation.',
+        opportunities: [],
+        signals: [],
+        generatedAt: new Date().toISOString()
+      };
+    }
+
+    const q = niche;
+    const queries = [
+      q,
+      `${q} tutorial`,
+      `${q} for beginners`,
+      `${q} ideas`,
+      `${q} workflow`
+    ].filter((query, index, arr) => query && arr.indexOf(query) === index).slice(0, 5);
+
+    const signals = [];
+    const youtube = this.credentials && typeof this.credentials.getYouTubeClient === 'function'
+      ? this.credentials.getYouTubeClient()
+      : null;
+
+    if (youtube) {
+      for (const query of queries) {
+        try {
+          const response = await youtube.search.list({
+            part: 'snippet',
+            q: query,
+            type: 'video',
+            maxResults: 3,
+            regionCode: region,
+            order: 'relevance',
+            safeSearch: 'moderate'
+          });
+
+          const items = response?.data?.items || [];
+          const videoIds = items.map(item => item.id?.videoId).filter(Boolean).join(',');
+
+          if (!videoIds) continue;
+
+          const details = await youtube.videos.list({
+            part: 'snippet,statistics',
+            id: videoIds,
+            regionCode: region
+          });
+
+          for (const video of details?.data?.items || []) {
+            const title = video?.snippet?.title || 'Untitled video';
+            const publishedAt = video?.snippet?.publishedAt || new Date().toISOString();
+            const views = Number(video?.statistics?.viewCount || 0);
+            const channel = video?.snippet?.channelTitle || 'Unknown channel';
+            const videoId = video?.id;
+            signals.push({
+              query,
+              videoId,
+              title,
+              channel,
+              publishedAt,
+              viewCount: views,
+              url: videoId ? `https://www.youtube.com/watch?v=${videoId}` : '',
+              score: Math.max(1, Math.min(10, Math.round(views / 1000000 + 2)))
+            });
+          }
+        } catch (error) {
+          this.logger.warn(`Niche trend lookup failed for query "${query}": ${error.message}`);
+        }
+      }
+    }
+
+    const dedupedSignals = [...new Map(signals.map(signal => [signal.url || `${signal.title}|${signal.channel}`, signal])).values()]
+      .sort((a, b) => (b.viewCount || 0) - (a.viewCount || 0))
+      .slice(0, 10);
+
+    let summary = `Niche validation for "${niche}" returned ${dedupedSignals.length} relevant recent signals.`;
+    let opportunities = dedupedSignals.slice(0, 5).map(signal => signal.title);
+
+    if (this.aiTextService && typeof this.aiTextService.isAvailable === 'function' && this.aiTextService.isAvailable()) {
+      try {
+        const prompt = `You are validating a YouTube niche. Based on the niche and recent videos, identify the strongest opportunity angles and explain why the niche has demand. Keep the answer compact, factual, and JSON-only.
+
+Niche: ${niche}
+Recent signals: ${JSON.stringify(dedupedSignals.slice(0, 5))}
+Return a JSON object: {"summary": "short summary", "opportunities": ["opportunity 1", "opportunity 2"]}`;
+        const aiResponse = await this.aiTextService.generateText(prompt, { maxTokens: 600, temperature: 0.5 });
+        const parsed = this.parseAIJsonResponse(aiResponse);
+        if (parsed && typeof parsed === 'object') {
+          if (parsed.summary) summary = String(parsed.summary);
+          if (Array.isArray(parsed.opportunities) && parsed.opportunities.length) {
+            opportunities = parsed.opportunities.slice(0, 5).map(item => String(item));
+          }
+        }
+      } catch (error) {
+        this.logger.warn(`AI niche summary failed: ${error.message}`);
+      }
+    }
+
+    return {
+      niche,
+      region,
+      summary,
+      opportunities,
+      signals: dedupedSignals,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
   async generateContentStrategy(requestedTopic = null) {
     try {
       let topic, angle, targetAudience, contentType;

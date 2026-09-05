@@ -24,6 +24,7 @@ class SystemTest {
       { name: 'Anonymous Telemetry Opt-in', test: () => this.testAnonymousTelemetryOptIn() },
       { name: 'Operator Workflow API', test: () => this.testOperatorWorkflowAPI() },
       { name: 'Autonomous Channel Operator', test: () => this.testAutonomousChannelOperator() },
+      { name: 'Niche Trend Finder', test: () => this.testNicheTrendFinder() },
       { name: 'Closed-loop Channel Learning', test: () => this.testChannelLearningLoop() },
       { name: 'Scene-Aware Retention Studio', test: () => this.testSceneAwareRetentionStudio() },
       { name: 'Production Readiness Gate', test: () => this.testProductionReadinessGate() },
@@ -471,6 +472,53 @@ class SystemTest {
     }
 
     this.logger.info('Autonomous channel operator test completed successfully');
+  }
+
+  async testNicheTrendFinder() {
+    const { ContentStrategyAgent } = require('./agents/content-strategy-agent');
+
+    const fakeCredentials = {
+      getYouTubeClient: () => ({
+        search: {
+          list: async () => ({
+            data: {
+              items: [
+                { id: { videoId: 'alpha123' }, snippet: { title: 'AI automation for local service businesses', channelTitle: 'Growth Lab', publishedAt: '2026-08-21T00:00:00Z' } },
+                { id: { videoId: 'beta456' }, snippet: { title: 'Best AI tools for contractors', channelTitle: 'Toolstack', publishedAt: '2026-08-19T00:00:00Z' } }
+              ]
+            }
+          })
+        },
+        videos: {
+          list: async () => ({
+            data: {
+              items: [
+                { id: 'alpha123', snippet: { title: 'AI automation for local service businesses', channelTitle: 'Growth Lab', publishedAt: '2026-08-21T00:00:00Z' }, statistics: { viewCount: '1234567' } },
+                { id: 'beta456', snippet: { title: 'Best AI tools for contractors', channelTitle: 'Toolstack', publishedAt: '2026-08-19T00:00:00Z' }, statistics: { viewCount: '987654' } }
+              ]
+            }
+          })
+        }
+      })
+    };
+
+    const strategyAgent = new ContentStrategyAgent(null, fakeCredentials);
+    strategyAgent.aiTextService = {
+      isAvailable: () => true,
+      generateText: async () => JSON.stringify({
+        nicheScore: 8,
+        summary: 'Strong demand for AI automation for service businesses.',
+        opportunities: ['AI automation workflows for small business operations']
+      })
+    };
+
+    const result = await strategyAgent.findNicheSignals({ niche: 'AI automation for local service businesses', region: 'US' });
+    if (!result || !result.niche || result.signals.length < 2) {
+      throw new Error('Niche trend finder did not return structured signals');
+    }
+    if (!/AI automation/i.test(result.summary || '')) {
+      throw new Error('Niche trend finder summary did not include AI automation context');
+    }
   }
 
   async testChannelLearningLoop() {

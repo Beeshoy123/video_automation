@@ -121,8 +121,11 @@ function renderDashboard() {
   $('#automation-toggle').textContent = state.system.automationPaused ? 'Resume automation' : 'Pause automation';
   $('#automation-toggle').disabled = state.system.setupRequired;
   $('#generate-button').disabled = state.system.setupRequired;
+  $('#top-generate-button').disabled = state.system.setupRequired;
   $('#review-badge').textContent = reviews.length;
   $('#review-badge').classList.toggle('hidden', reviews.length === 0);
+  const notificationCount = (state.notifications || []).length || (state.events || []).filter(event => event.status === 'error').length;
+  $('#notifications-badge').classList.toggle('hidden', notificationCount === 0);
 
   $('#stat-review').textContent = reviews.length;
   $('#stat-scheduled').textContent = scheduled.length;
@@ -242,6 +245,21 @@ function renderNotifications(notifications, events) {
   }
   container.innerHTML = items.slice(0, 7).map(item => `
     <div class="activity ${escapeHTML(item.level || 'info')}"><i></i><p><strong>${escapeHTML(item.title)}</strong><br><span class="meta-line">${escapeHTML(item.message)}</span></p><small>${timeAgo(item.created_at)}</small></div>`).join('');
+}
+
+function renderGlobalSearch(query = '') {
+  const term = query.trim().toLowerCase();
+  const state = ui.state || {};
+  const items = [
+    ...(state.pipeline || []).map(item => ({ id: item.id, title: item.title || item.topic || 'Untitled production', meta: `Pipeline · ${label(item.review_status || item.status)}`, open: item.id })),
+    ...(state.ideas || []).map(item => ({ title: item.topic || 'Untitled idea', meta: `Idea · ${label(item.status || 'backlog')}` })),
+    ...(state.jobs || []).map(item => ({ title: item.title || item.topic || 'Generation job', meta: `Job · ${label(item.status)}` }))
+  ].filter(item => !term || `${item.title} ${item.meta}`.toLowerCase().includes(term)).slice(0, 12);
+  const container = $('#global-search-results');
+  if (!container) return;
+  container.innerHTML = items.length
+    ? items.map(item => `<button type="button" class="search-result" ${item.open ? `data-open-content="${escapeHTML(item.open)}"` : ''}><span><strong>${escapeHTML(item.title)}</strong><small>${escapeHTML(item.meta)}</small></span><span aria-hidden="true">→</span></button>`).join('')
+    : empty(term ? 'No matching content found.' : 'Search your pipeline, ideas, and generation jobs.');
 }
 
 function currentPipelineFilter() {
@@ -547,6 +565,8 @@ function populateSettings(profile = {}, settings = {}, providers = []) {
 
 function switchView(view) {
   ui.currentView = view;
+  const titles = { overview: 'Overview', pipeline: 'Content pipeline', calendar: 'Calendar & ideas', operator: 'Autonomous operator', readiness: 'Production readiness', analytics: 'Analytics', settings: 'Channel setup' };
+  $('#workspace-view-title').textContent = titles[view] || 'Overview';
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `${view}-view`));
   location.hash = view;
@@ -715,6 +735,44 @@ function renderShortsStudio(item) {
   </section>`;
 }
 
+
+function setupPreviewPlayer() {
+  const player = $('#production-preview-player');
+  if (!player) return;
+  const formatTime = value => {
+    if (!Number.isFinite(value)) return '0:00';
+    const seconds = Math.max(0, Math.floor(value));
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  };
+  const update = () => {
+    const duration = Number.isFinite(player.duration) ? player.duration : 0;
+    const progress = duration ? (player.currentTime / duration) * 100 : 0;
+    const progressBar = $('#preview-progress-bar');
+    if (progressBar) progressBar.style.width = `${Math.max(0, Math.min(100, progress))}%`;
+    const current = document.querySelector('[data-preview-current-time]');
+    const total = document.querySelector('[data-preview-duration]');
+    const playButton = document.querySelector('[data-preview-play]');
+    if (current) current.textContent = formatTime(player.currentTime);
+    if (total) total.textContent = formatTime(duration);
+    if (playButton) playButton.textContent = player.paused ? 'Play' : 'Pause';
+  };
+  player.addEventListener('loadedmetadata', update);
+  player.addEventListener('timeupdate', update);
+  player.addEventListener('play', update);
+  player.addEventListener('pause', update);
+  document.querySelector('[data-preview-volume]')?.addEventListener('input', event => {
+    player.volume = Number(event.target.value);
+  });
+  document.querySelector('[data-preview-speed]')?.addEventListener('change', event => {
+    player.playbackRate = Number(event.target.value);
+  });
+  document.querySelector('.timeline-track')?.addEventListener('click', event => {
+    if (!player.duration) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    player.currentTime = ((event.clientX - bounds.left) / bounds.width) * player.duration;
+  });
+  update();
+}
 async function openContent(productionId) {
   $('#loading').classList.add('active');
   try {
@@ -728,12 +786,82 @@ async function openContent(productionId) {
     const experiment = data.packagingExperiment;
     const selectedTitleVariant = Number(data.selectedTitleVariant || 0);
     const selectedThumbnailVariant = Number(data.selectedThumbnailVariant || 0);
+    const scenes = Array.isArray(item.scenes) ? item.scenes : [];
+    const sceneDuration = scenes.length ? scenes.reduce((sum, scene) => sum + Number(scene.duration || 0), 0) : Number(item.duration || 0) || 0;
+    const previewVideo = item.assetUrls.video || '';
+    const previewPoster = item.assetUrls.thumbnail || '';
+    const narrationStatus = item.assets?.audio?.status || item.audio?.status || 'ready';
+    const currentScene = scenes[0] || { label: 'Opening scene', duration: 0 };
+    const sceneMarkers = scenes.length
+      ? scenes.map((scene, index) => {
+          const startOffset = scenes.slice(0, index).reduce((sum, entry) => sum + Number(entry.duration || 0), 0);
+          const offsetPercent = sceneDuration ? (startOffset / sceneDuration) * 100 : 0;
+          const sceneLabel = scene.label || `Scene ${index + 1}`;
+          return `<button type="button" class="scene-marker ${index === 0 ? 'active' : ''}" data-scene-jump="${escapeHTML(scene.id || `scene-${index + 1}`)}" data-scene-label="${escapeHTML(sceneLabel)}" data-scene-start="${Number(startOffset).toFixed(2)}" data-scene-progress="${Number(offsetPercent).toFixed(2)}" style="left:${offsetPercent}%">${index + 1}</button>`;
+        }).join('')
+      : '<span class="scene-marker empty">No scene markers yet</span>';
     $('#content-detail').innerHTML = `
       <div class="dialog-heading"><div><p class="eyebrow">CONTENT REVIEW</p><h2>${escapeHTML(title)}</h2><div class="meta-line">${statusChip(item.schedule?.status || item.review_status || item.status)} · Quality ${qualityScore(item.qualityChecks)}%</div></div><button type="button" class="close-button" data-close>×</button></div>
       <form id="content-review-form" class="editor content-review-editor">
         <div class="content-layout">
           <div>
-            <div class="preview">${item.assetUrls.video ? `<video controls preload="metadata" poster="${item.assetUrls.thumbnail || ''}"><source src="${item.assetUrls.video}" type="video/mp4"></video>` : item.assetUrls.thumbnail ? `<img src="${item.assetUrls.thumbnail}" alt="Generated thumbnail">` : '<div class="preview-placeholder">No playable preview was produced.</div>'}</div>
+            <div class="production-preview-workspace">
+              <div class="preview-media-panel">
+                <div class="preview-header">
+                  <div>
+                    <p class="eyebrow">PRODUCTION PREVIEW WORKSPACE</p>
+                    <h3>${escapeHTML(title)}</h3>
+                  </div>
+                  <div class="preview-actions">
+                    <button type="button" class="button secondary small" data-preview-toggle-captions>Captions: On</button>
+                    <button type="button" class="button secondary small" data-preview-export>Download / Export</button>
+                  </div>
+                </div>
+                <div class="preview-video-shell">
+                  ${previewVideo
+                    ? `<video id="production-preview-player" preload="metadata" poster="${previewPoster}" data-captions="on"><source src="${previewVideo}" type="video/mp4"></video>`
+                    : previewPoster
+                      ? `<img src="${previewPoster}" alt="Generated thumbnail">`
+                      : '<div class="preview-placeholder">No playable preview was produced.</div>'}
+                  <div class="preview-scene-badge">Current scene: <strong>${escapeHTML(currentScene.label || 'Opening scene')}</strong></div>
+                </div>
+                ${previewVideo ? `<div class="preview-controls" aria-label="Video controls">
+                  <button type="button" class="player-control player-play" data-preview-play aria-label="Play video">Play</button>
+                  <button type="button" class="player-control" data-preview-skip="-10" aria-label="Skip back 10 seconds">-10s</button>
+                  <button type="button" class="player-control" data-preview-skip="10" aria-label="Skip forward 10 seconds">+10s</button>
+                  <span class="preview-time"><strong data-preview-current-time>0:00</strong> / <span data-preview-duration>0:00</span></span>
+                  <input class="preview-volume" data-preview-volume type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">
+                  <select class="preview-speed" data-preview-speed aria-label="Playback speed"><option value="0.75">0.75x</option><option value="1" selected>1x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option><option value="2">2x</option></select>
+                  <button type="button" class="player-control" data-preview-fullscreen aria-label="Fullscreen">Fullscreen</button>
+                </div>` : ''}
+                <div class="timeline-progress" aria-label="Video timeline">
+                  <div class="timeline-track"><span id="preview-progress-bar" style="width:0%"></span></div>
+                  <div class="scene-markers">${sceneMarkers}</div>
+                </div>
+              </div>
+              <aside class="preview-info-panel">
+                <div class="preview-info-card">
+                  <span class="eyebrow">CURRENT SCENE</span>
+                  <strong>${escapeHTML(currentScene.label || 'Opening scene')}</strong>
+                  <small>${sceneDuration ? `${sceneDuration}s total runtime` : 'Timeline still being assembled'}</small>
+                </div>
+                <div class="preview-info-card">
+                  <span class="eyebrow">AUDIO / NARRATION</span>
+                  <strong>${escapeHTML(label(narrationStatus))}</strong>
+                  <small>${escapeHTML(item.assets?.audio?.provider || item.audio?.provider || 'Narration ready')}</small>
+                </div>
+                <div class="preview-info-card">
+                  <span class="eyebrow">CAPTIONS</span>
+                  <strong>English</strong>
+                  <small>${escapeHTML(item.assets?.captions?.status || 'Captions available')}</small>
+                </div>
+                <div class="preview-info-card">
+                  <span class="eyebrow">EXPORT</span>
+                  <strong>${previewVideo ? 'Ready' : 'Pending'}</strong>
+                  <small>${previewVideo ? 'MP4 output available for review' : 'Final render not generated yet'}</small>
+                </div>
+              </aside>
+            </div>
             <div class="quality-grid">${(item.qualityChecks || []).map(check => `<div class="quality-check ${check.passed ? 'pass' : 'fail'}">${check.passed ? '✓' : '×'} ${escapeHTML(check.message)}</div>`).join('') || '<div class="quality-check">No quality results recorded.</div>'}</div>
             ${item.review_notes ? `<p class="callout">${escapeHTML(item.review_notes)}</p>` : ''}
           </div>
@@ -766,6 +894,7 @@ async function openContent(productionId) {
       </form>`;
     $('#content-review-form').dataset.productionId = item.id;
     $('#content-dialog').showModal();
+    setupPreviewPlayer();
   } catch (error) {
     showToast(error.message, 'error');
   } finally {
@@ -927,18 +1056,143 @@ async function mutate(url, method, body, successMessage) {
 }
 
 document.addEventListener('click', async event => {
+  const templatePreview = event.target.closest('[data-template-preview]');
+  if (templatePreview) {
+    const templateId = templatePreview.dataset.templatePreview;
+    const template = templateCatalog[templateId];
+    if (!template) return;
+    $('#template-preview-content').innerHTML = `<div class="dialog-heading"><div><p class="eyebrow">TEMPLATE PREVIEW</p><h2>${escapeHTML(template.title)}</h2></div><button type="button" class="close-button" data-close>×</button></div><div class="template-preview-layout"><img class="template-preview-image" src="/assets/youtube-automation-agent.jpg" alt="${escapeHTML(template.title)} representative preview"><div class="template-preview-copy"><p>${escapeHTML(template.description)}</p><div class="template-preview-tags">${template.tags.map(tag => `<span>${escapeHTML(tag)}</span>`).join('')}</div><div class="form-actions"><button type="button" class="button primary" data-template-use="${escapeHTML(templateId)}">Use template</button><button type="button" class="button ghost" data-close>Close</button></div></div></div>`;
+    $('#template-preview-dialog').showModal();
+    return;
+  }
+
+  const templateSave = event.target.closest('[data-template-save]');
+  if (templateSave) {
+    const templateId = templateSave.dataset.templateSave;
+    const template = templateCatalog[templateId];
+    if (!template) return;
+    const saved = JSON.parse(localStorage.getItem('yaa_template_presets') || '[]');
+    if (!saved.some(item => item.id === templateId)) {
+      saved.push({ id: templateId, title: template.title, values: generationTemplates[templateId], savedAt: new Date().toISOString() });
+      localStorage.setItem('yaa_template_presets', JSON.stringify(saved));
+      templateSave.textContent = '★';
+      showToast(`${template.title} saved as a local preset.`);
+    } else {
+      showToast(`${template.title} is already saved.`);
+    }
+    return;
+  }
+
+  const templateUse = event.target.closest('[data-template-use]');
+  if (templateUse) {
+    const templateId = templateUse.dataset.templateUse;
+    const values = generationTemplates[templateId];
+    const form = $('#generate-form');
+    if (form && values) {
+      for (const [name, value] of Object.entries(values)) {
+        if (form.elements[name]) form.elements[name].value = value;
+      }
+      document.querySelectorAll('[data-create-style]').forEach(item => item.classList.toggle('selected', item.dataset.createStyle === values.style));
+      updateCreatePreview();
+      $('#template-preview-dialog')?.close();
+      $('#generate-dialog').showModal();
+    }
+    return;
+  }
+
   const template = event.target.closest('[data-template]');
   if (template) {
     const form = $('#generate-form');
     const values = generationTemplates[template.dataset.template];
     if (form && values) {
       for (const [name, value] of Object.entries(values)) {
-        if (form.elements[name]) form.elements[name].value = value;
+        const field = form.querySelector(`[name="${name}"]`);
+        if (field) field.value = value;
       }
+      document.querySelectorAll('[data-create-style]').forEach(item => item.classList.toggle('selected', item.dataset.createStyle === values.style));
+      updateCreatePreview();
       $('#generate-dialog').showModal();
     }
     return;
   }
+
+  const previewCaptionsToggle = event.target.closest('[data-preview-toggle-captions]');
+  if (previewCaptionsToggle) {
+    const player = $('#production-preview-player');
+    const enabled = !(player?.dataset?.captions === 'on');
+    if (player) player.dataset.captions = enabled ? 'on' : 'off';
+    previewCaptionsToggle.textContent = enabled ? 'Captions: On' : 'Captions: Off';
+    previewCaptionsToggle.classList.toggle('secondary', !enabled);
+    previewCaptionsToggle.classList.toggle('ghost', enabled);
+    showToast(enabled ? 'Captions enabled for preview.' : 'Captions turned off for preview.');
+    return;
+  }
+
+  const previewPlay = event.target.closest('[data-preview-play]');
+  if (previewPlay) {
+    const player = $('#production-preview-player');
+    if (!player) return;
+    if (player.paused) await player.play().catch(() => {});
+    else player.pause();
+    return;
+  }
+
+  const previewSkip = event.target.closest('[data-preview-skip]');
+  if (previewSkip) {
+    const player = $('#production-preview-player');
+    if (player) player.currentTime = Math.max(0, Math.min(player.duration || 0, player.currentTime + Number(previewSkip.dataset.previewSkip || 0)));
+    return;
+  }
+
+  const previewFullscreen = event.target.closest('[data-preview-fullscreen]');
+  if (previewFullscreen) {
+    const shell = document.querySelector('.preview-video-shell');
+    if (shell?.requestFullscreen) shell.requestFullscreen();
+    return;
+  }
+
+  const previewExport = event.target.closest('[data-preview-export]');
+  if (previewExport) {
+    const player = $('#production-preview-player');
+    const href = player?.currentSrc || player?.dataset?.src || '';
+    if (!href) {
+      showToast('No downloadable video is available yet.', 'error');
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = 'production-preview.mp4';
+    link.target = '_blank';
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    showToast('Download started.');
+    return;
+  }
+
+  const sceneJump = event.target.closest('[data-scene-jump]');
+  if (sceneJump) {
+    const player = $('#production-preview-player');
+    const sceneLabel = sceneJump.dataset.sceneLabel || 'Current scene';
+    const badge = document.querySelector('.preview-scene-badge strong');
+    const progressBar = document.getElementById('preview-progress-bar');
+    const startTime = Number(sceneJump.dataset.sceneStart || 0);
+    const progressPercent = Number(sceneJump.dataset.sceneProgress || 0);
+    if (badge) badge.textContent = sceneLabel;
+    if (progressBar) progressBar.style.width = `${Math.max(0, Math.min(100, progressPercent))}%`;
+    if (player) {
+      if (Number.isFinite(player.duration) && player.duration > 0) {
+        player.currentTime = Math.min(player.duration, startTime);
+      } else {
+        player.dataset.progress = String(progressPercent);
+      }
+    }
+    document.querySelectorAll('.scene-marker').forEach(marker => marker.classList.toggle('active', marker === sceneJump));
+    showToast(`Previewing ${sceneLabel}.`);
+    return;
+  }
+
   const nav = event.target.closest('[data-view]');
   if (nav) return switchView(nav.dataset.view);
   const go = event.target.closest('[data-go]');
@@ -946,7 +1200,10 @@ document.addEventListener('click', async event => {
   if (event.target.closest('[data-close]')) return event.target.closest('dialog').close();
 
   const open = event.target.closest('[data-open-content]');
-  if (open) return openContent(open.dataset.openContent);
+  if (open) {
+    $('#global-search-dialog')?.close();
+    return openContent(open.dataset.openContent);
+  }
 
   const cancel = event.target.closest('[data-cancel-job]');
   if (cancel && confirm('Cancel this generation job after its current stage?')) {
@@ -1223,6 +1480,45 @@ document.addEventListener('change', event => {
 
 $('#generate-button').addEventListener('click', () => $('#generate-dialog').showModal());
 $('#overview-create-button').addEventListener('click', () => $('#generate-dialog').showModal());
+$('#top-generate-button').addEventListener('click', () => $('#generate-dialog').showModal());
+$('#global-search-button').addEventListener('click', () => {
+  renderGlobalSearch();
+  $('#global-search-dialog').showModal();
+  $('#global-search-input').focus();
+});
+$('#global-search-input').addEventListener('input', event => renderGlobalSearch(event.target.value));
+$('#notifications-button').addEventListener('click', () => {
+  switchView('overview');
+  document.querySelector('#notification-list')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+function updateCreatePreview() {
+  const form = $('#generate-form');
+  if (!form) return;
+  const field = name => form.querySelector(`[name="${name}"]`);
+  const topic = field('topic')?.value.trim() || 'Your story';
+  const style = field('style')?.selectedOptions[0]?.textContent || 'Explainer';
+  const imageStyle = field('imageStyle')?.selectedOptions[0]?.textContent || 'Cinematic';
+  const scenes = field('sceneCount')?.value || '8';
+  const length = field('length')?.selectedOptions[0]?.textContent || '8–12 min';
+  const topicNode = $('[data-preview-topic]');
+  const styleNode = $('[data-preview-style]');
+  const scenesNode = $('[data-preview-scenes]');
+  const lengthNode = $('[data-preview-length]');
+  if (topicNode) topicNode.textContent = topic.slice(0, 34).toUpperCase();
+  if (styleNode) styleNode.textContent = `${imageStyle} ${style}`.toUpperCase();
+  if (scenesNode) scenesNode.textContent = `${scenes} scenes`;
+  if (lengthNode) lengthNode.textContent = length.replace(' · ', ' ');
+}
+document.querySelectorAll('[data-create-style]').forEach(button => {
+  button.addEventListener('click', () => {
+    const form = $('#generate-form');
+    form.querySelector('[name="style"]').value = button.dataset.createStyle;
+    document.querySelectorAll('[data-create-style]').forEach(item => item.classList.toggle('selected', item === button));
+    updateCreatePreview();
+  });
+});
+$('#generate-form').addEventListener('input', updateCreatePreview);
+$('#generate-form').addEventListener('change', updateCreatePreview);
 const generationTemplates = {
   mystery: { topic: '', style: 'story', length: 'short', storyType: 'mystery', imageStyle: 'cinematic', character: '', visualStyle: 'moody cinematic narrative', sceneCount: '8', voiceDirection: 'Calm, tense storyteller' },
   scary: { topic: '', style: 'story', length: 'short', storyType: 'scary', imageStyle: 'cinematic', character: '', visualStyle: 'dark atmospheric horror', sceneCount: '8', voiceDirection: 'Low, suspenseful narrator' },
@@ -1231,14 +1527,25 @@ const generationTemplates = {
   shorts: { topic: '', style: 'explainer', length: 'short', storyType: 'fun_facts', imageStyle: 'cinematic', character: '', visualStyle: 'bold vertical documentary', sceneCount: '6', voiceDirection: 'Fast, clear narrator' },
   history: { topic: '', style: 'story', length: 'short', storyType: 'history', imageStyle: 'cinematic', character: '', visualStyle: 'period documentary realism', sceneCount: '8', voiceDirection: 'Measured documentary narrator' }
 };
+const templateCatalog = {
+  mystery: { title: 'Mystery story', description: 'A cinematic suspense template with a slow reveal, atmospheric visuals, and a calm storyteller voice.', tags: ['Narrative', 'Cinematic', '8 scenes'] },
+  scary: { title: 'Scary story', description: 'A moody short-form horror structure built for tension, shadowy imagery, and a low suspenseful narration style.', tags: ['Dark', 'Suspense', 'Short'] },
+  facts: { title: 'Fun facts', description: 'A quick visual explainer format with clean documentary imagery and an energetic narrator.', tags: ['Explainer', 'Fast', 'Visual'] },
+  motivational: { title: 'Motivational', description: 'A bold story arc with warm cinematic visuals and an encouraging voice designed for momentum.', tags: ['Story', 'Energetic', 'Bold'] },
+  shorts: { title: 'Quick Short', description: 'A vertical-friendly faceless stock structure for fast ideas, clear narration, and compact scenes.', tags: ['Short', 'Vertical', 'Stock'] },
+  history: { title: 'Interesting history', description: 'A research-first documentary template with period visuals, measured narration, and room for verified sources.', tags: ['History', 'Research', 'Documentary'] }
+};
 document.querySelectorAll('[data-template]').forEach(button => {
   button.addEventListener('click', () => {
     const form = $('#generate-form');
     const values = generationTemplates[button.dataset.template];
     if (!form || !values) return;
     for (const [name, value] of Object.entries(values)) {
-      if (form.elements[name]) form.elements[name].value = value;
+      const field = form.querySelector(`[name="${name}"]`);
+      if (field) field.value = value;
     }
+    document.querySelectorAll('[data-create-style]').forEach(item => item.classList.toggle('selected', item.dataset.createStyle === values.style));
+    updateCreatePreview();
     $('#generate-dialog').showModal();
   });
 });

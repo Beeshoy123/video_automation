@@ -1,7 +1,7 @@
 {
-  "name": "youtube-automation-agent",
+  "name": "video-automation-studio",
   "version": "2.8.0",
-  "description": "Lumen is an open-source AI agent that runs a YouTube channel end to end",
+  "description": "Video Automation Studio is an open-source AI workspace for creating, reviewing, and publishing videos end to end",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
