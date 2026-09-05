@@ -1,4 +1,5 @@
 const fs = require('fs').promises;
+const path = require('path');
 const axios = require('axios');
 const { Logger } = require('./logger');
 
@@ -18,6 +19,8 @@ class OperatorService {
     const bannedTopics = Array.isArray(profile.bannedTopics) ? profile.bannedTopics : [];
     const combinedText = `${title}\n${description}\n${script}`.toLowerCase();
 
+    const videoPath = String(finalVideo?.path || '');
+    const videoIsReal = Boolean(finalVideo?.path && !finalVideo?.simulated && path.extname(videoPath).toLowerCase() === '.mp4' && await this.fileExists(videoPath));
     const checks = [
       this.check('title', title.length > 0 && title.length <= 100,
         title ? `Title is ${title.length}/100 characters` : 'A title is required'),
@@ -29,10 +32,14 @@ class OperatorService {
         script.length >= 200 ? 'Script content is present' : 'Script is missing or unusually short'),
       this.check('thumbnail', Boolean(thumbnail?.path),
         thumbnail?.path ? 'Thumbnail asset is present' : 'Thumbnail asset is missing', false),
-      this.check('video', Boolean(finalVideo?.path && !finalVideo?.simulated),
+      this.check('video', videoIsReal,
         finalVideo?.simulated
-          ? 'Only a simulated video was produced'
-          : finalVideo?.path ? 'Final MP4 is ready' : 'Final MP4 is missing')
+          ? 'Only placeholder metadata was produced; rebuild the final video'
+          : finalVideo?.path && path.extname(videoPath).toLowerCase() !== '.mp4'
+            ? 'A non-MP4 or visual-only intermediate is recorded; rebuild the final video'
+            : finalVideo?.path && !await this.fileExists(videoPath)
+              ? 'The recorded final MP4 is missing from disk; rebuild the final video'
+              : finalVideo?.path ? 'Final MP4 is ready' : 'Final MP4 is missing')
     ];
 
     const topic = String(production.strategy?.topic || '').trim();
@@ -51,7 +58,7 @@ class OperatorService {
     }
 
     if (finalVideo?.path && !finalVideo?.simulated) {
-      checks.push(this.check('video_file', await this.fileExists(finalVideo.path),
+      checks.push(this.check('video_file', videoIsReal,
         'Final video file exists on disk'));
     }
 

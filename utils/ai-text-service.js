@@ -2,9 +2,9 @@ const OpenAI = require('openai');
 const { Logger } = require('./logger');
 
 const GEMINI_MODELS = [
+  'gemini-3.5-flash-lite',
   'gemini-3.7-flash',
   'gemini-3.1-pro-preview',
-  'gemini-3.5-flash-lite',
 ];
 const GEMINI_DEFAULT_MODEL = GEMINI_MODELS[0];
 

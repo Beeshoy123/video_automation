@@ -218,7 +218,13 @@ function renderReadiness(readiness = {}) {
     ? `Last run ${formatDate(readiness.completed_at)}${readiness.stale ? ' · older than 24 hours' : ''}`
     : 'No readiness run recorded.';
 
-  const checks = Array.isArray(readiness.checks) ? readiness.checks : [];
+  const statusPriority = { failed: 0, warning: 1, skipped: 2, passed: 3 };
+  const checks = Array.isArray(readiness.checks)
+    ? readiness.checks
+      .map((check, index) => ({ check, index }))
+      .sort((left, right) => (statusPriority[left.check.status] ?? 4) - (statusPriority[right.check.status] ?? 4) || left.index - right.index)
+      .map(({ check }) => check)
+    : [];
   $('#readiness-checks').innerHTML = checks.length ? checks.map(check => `
     <article class="readiness-check ${escapeHTML(check.status)}">
       <div class="readiness-check-heading"><span class="readiness-icon" aria-hidden="true">${check.status === 'passed' ? '✓' : check.status === 'failed' ? '×' : '!'}</span><div><strong>${escapeHTML(check.label)}</strong><div class="meta-line">${escapeHTML(label(check.status))}${check.blocking ? ' · blocking' : ' · optional'} · ${(check.durationMs || 0) / 1000}s</div></div></div>
@@ -565,7 +571,7 @@ function renderOperator(strategy, runs, system) {
   const active = run && ['queued', 'running', 'cancelling'].includes(run.status);
   const recoverable = run && ['failed', 'interrupted', 'completed_with_issues'].includes(run.status);
   $('#activate-operator-button').disabled = Boolean(system.setupRequired || active || system.readiness?.status === 'failed');
-  $('#activate-operator-button').title = system.readiness?.status === 'failed' ? 'Resolve the production readiness failures first' : '';
+  $('#activate-operator-button').title = system.readiness?.status === 'failed' ? 'Resolve the pipeline health failures first' : '';
   $('#activate-operator-button').textContent = strategy?.status === 'active' ? 'Run strategy now' : 'Activate & run now';
   $('#pause-operator-button').classList.toggle('hidden', strategy?.status !== 'active');
   $('#cancel-operator-run').classList.toggle('hidden', !active);
@@ -639,7 +645,7 @@ function populateSettings(profile = {}, settings = {}, providers = []) {
 
 function switchView(view) {
   ui.currentView = view;
-  const titles = { overview: 'Overview', pipeline: 'Content pipeline', calendar: 'Calendar & ideas', operator: 'Niche & ideas', readiness: 'Production readiness', analytics: 'Analytics', settings: 'Channel setup' };
+  const titles = { overview: 'Overview', pipeline: 'Content pipeline', calendar: 'Calendar & ideas', operator: 'Niche & ideas', readiness: 'Pipeline health', analytics: 'Analytics', settings: 'Channel setup' };
   const workspaceTitle = $('#workspace-view-title');
   if (workspaceTitle) workspaceTitle.textContent = view === 'overview' ? ui.overviewStatus : titles[view] || 'Overview';
   if (ui.state) renderLiveStageBar(ui.state.jobs || [], ui.state.pipeline || []);
@@ -866,7 +872,6 @@ async function openContent(productionId) {
     const sceneDuration = scenes.length ? scenes.reduce((sum, scene) => sum + Number(scene.duration || 0), 0) : Number(item.duration || 0) || 0;
     const previewVideo = item.assetUrls.video || '';
     const previewPoster = item.assetUrls.thumbnail || '';
-    const narrationStatus = item.assets?.audio?.status || item.audio?.status || 'ready';
     const currentScene = scenes[0] || { label: 'Opening scene', duration: 0 };
     const sceneMarkers = scenes.length
       ? scenes.map((scene, index) => {
@@ -889,8 +894,8 @@ async function openContent(productionId) {
                     <h3>${escapeHTML(title)}</h3>
                   </div>
                   <div class="preview-actions">
-                    <button type="button" class="button secondary small" data-preview-toggle-captions>Captions: On</button>
-                    <button type="button" class="button secondary small" data-preview-export>Download / Export</button>
+                    <button type="button" class="button secondary small preview-action-icon" data-preview-toggle-captions aria-label="Toggle captions" aria-pressed="true" title="Toggle captions">CC</button>
+                    <button type="button" class="button secondary small preview-action-icon" data-preview-export aria-label="${previewVideo ? 'Download video' : 'Export pending'}" ${previewVideo ? 'title="Download video"' : 'disabled title="Rebuild the final video before exporting"'}><span aria-hidden="true">⇩</span></button>
                   </div>
                 </div>
                 <div class="preview-video-shell">
@@ -899,44 +904,23 @@ async function openContent(productionId) {
                     : previewPoster
                       ? `<img src="${previewPoster}" alt="Generated thumbnail">`
                       : '<div class="preview-placeholder">No playable preview was produced.</div>'}
+                  ${previewVideo ? '<button type="button" class="preview-play-overlay" data-preview-play aria-label="Play video">▶</button>' : ''}
                   <div class="preview-scene-badge">Current scene: <strong>${escapeHTML(currentScene.label || 'Opening scene')}</strong></div>
                 </div>
                 ${previewVideo ? `<div class="preview-controls" aria-label="Video controls">
-                  <button type="button" class="player-control player-play" data-preview-play aria-label="Play video">Play</button>
+                  <button type="button" class="player-control player-play" data-preview-play aria-label="Play video">▶</button>
                   <button type="button" class="player-control" data-preview-skip="-10" aria-label="Skip back 10 seconds">-10s</button>
                   <button type="button" class="player-control" data-preview-skip="10" aria-label="Skip forward 10 seconds">+10s</button>
                   <span class="preview-time"><strong data-preview-current-time>0:00</strong> / <span data-preview-duration>0:00</span></span>
                   <input class="preview-volume" data-preview-volume type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">
                   <select class="preview-speed" data-preview-speed aria-label="Playback speed"><option value="0.75">0.75x</option><option value="1" selected>1x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option><option value="2">2x</option></select>
-                  <button type="button" class="player-control" data-preview-fullscreen aria-label="Fullscreen">Fullscreen</button>
+                  <button type="button" class="player-control preview-fullscreen" data-preview-fullscreen aria-label="Enter fullscreen" title="Fullscreen">⛶</button>
                 </div>` : ''}
                 <div class="timeline-progress" aria-label="Video timeline">
                   <div class="timeline-track"><span id="preview-progress-bar" style="width:0%"></span></div>
                   <div class="scene-markers">${sceneMarkers}</div>
                 </div>
               </div>
-              <aside class="preview-info-panel">
-                <div class="preview-info-card">
-                  <span class="eyebrow">CURRENT SCENE</span>
-                  <strong>${escapeHTML(currentScene.label || 'Opening scene')}</strong>
-                  <small>${sceneDuration ? `${sceneDuration}s total runtime` : 'Timeline still being assembled'}</small>
-                </div>
-                <div class="preview-info-card">
-                  <span class="eyebrow">AUDIO / NARRATION</span>
-                  <strong>${escapeHTML(label(narrationStatus))}</strong>
-                  <small>${escapeHTML(item.assets?.audio?.provider || item.audio?.provider || 'Narration ready')}</small>
-                </div>
-                <div class="preview-info-card">
-                  <span class="eyebrow">CAPTIONS</span>
-                  <strong>English</strong>
-                  <small>${escapeHTML(item.assets?.captions?.status || 'Captions available')}</small>
-                </div>
-                <div class="preview-info-card">
-                  <span class="eyebrow">EXPORT</span>
-                  <strong>${previewVideo ? 'Ready' : 'Pending'}</strong>
-                  <small>${previewVideo ? 'MP4 output available for review' : 'Final render not generated yet'}</small>
-                </div>
-              </aside>
             </div>
             <div class="quality-grid">${(item.qualityChecks || []).map(check => `<div class="quality-check ${check.passed ? 'pass' : 'fail'}">${check.passed ? '✓' : '×'} ${escapeHTML(check.message)}</div>`).join('') || '<div class="quality-check">No quality results recorded.</div>'}</div>
             ${item.review_notes ? `<p class="callout">${escapeHTML(item.review_notes)}</p>` : ''}
@@ -1211,7 +1195,9 @@ document.addEventListener('click', async event => {
     const player = $('#production-preview-player');
     const enabled = !(player?.dataset?.captions === 'on');
     if (player) player.dataset.captions = enabled ? 'on' : 'off';
-    previewCaptionsToggle.textContent = enabled ? 'Captions: On' : 'Captions: Off';
+    previewCaptionsToggle.textContent = 'CC';
+    previewCaptionsToggle.setAttribute('aria-pressed', String(enabled));
+    previewCaptionsToggle.title = enabled ? 'Captions on' : 'Captions off';
     previewCaptionsToggle.classList.toggle('secondary', !enabled);
     previewCaptionsToggle.classList.toggle('ghost', enabled);
     showToast(enabled ? 'Captions enabled for preview.' : 'Captions turned off for preview.');
@@ -1671,7 +1657,7 @@ $('#run-readiness-button').addEventListener('click', async event => {
     await mutate('/api/readiness/run', 'POST', {
       includePaidMedia: $('#paid-image-probe').checked,
       includePaidVideo: $('#paid-video-probe').checked
-    }, 'Production readiness check completed.');
+    }, 'Pipeline health check completed.');
     switchView('readiness');
   } catch (_error) { /* toast already shown */ }
   finally {

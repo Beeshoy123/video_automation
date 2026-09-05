@@ -364,7 +364,7 @@ class ProductionManagementAgent {
     try {
       // Try to generate AI thumbnail first
       const thumbnailScript = thumbnail.script || script || { title: thumbnail.title || 'Untitled Video' };
-      const aiThumbnail = await this.aiVideoGenerator.generateThumbnail(thumbnailScript, 'ethereal');
+      const aiThumbnail = await this.aiVideoGenerator.generateThumbnail(thumbnailScript, this.selectVisualStyle(script));
       
       return {
         path: aiThumbnail.path,
@@ -445,8 +445,9 @@ class ProductionManagementAgent {
       const visualPrompts = this.createVisualPromptsFromScript(script);
       const visualAssets = [];
       
+      const visualStyle = this.selectVisualStyle(script);
       for (const prompt of visualPrompts) {
-        const assets = await this.aiVideoGenerator.generateVisualAssets(prompt, 'ethereal', 1);
+        const assets = await this.aiVideoGenerator.generateVisualAssets(prompt, visualStyle, 1);
         visualAssets.push(...assets);
       }
       
@@ -734,12 +735,15 @@ class ProductionManagementAgent {
         return await this.simulateVideoAssembly(productionData);
       }
 
+      await this.aiVideoGenerator.burnCaptionsIntoVideo(finalVideoPath, productionData.assets.captions?.path);
+      const validatedVideo = await this.aiVideoGenerator.validateVideoFile(finalVideoPath);
+
       // Get file stats
       const stats = await fs.stat(finalVideoPath);
       
       productionData.assets.finalVideo = {
         path: finalVideoPath,
-        fileSize: stats.size,
+        fileSize: validatedVideo.bytes || stats.size,
         duration: productionData.estimatedDuration,
         generatedWith: 'AI',
         resolution: '1920x1080',
@@ -799,25 +803,42 @@ class ProductionManagementAgent {
   // Helper method to create visual prompts from script content
   createVisualPromptsFromScript(script) {
     const prompts = [];
-    
-    // Title prompt
-    prompts.push(`${script.title}, ethereal storytelling, mystical background`);
-    
-    // Content-based prompts
-    if (script.mainContent && script.mainContent.sections) {
-      script.mainContent.sections.forEach(section => {
-        if (section.title) {
-          prompts.push(`${section.title}, ethereal dreamscape, creative visualization`);
-        }
-      });
+    const sources = [
+      script.hook?.text
+        ? `${script.hook.text}. Immediate opening hook: show the central subject in a visually surprising moment that creates curiosity in the first seconds.`
+        : `${script.title || 'Video topic'}. Immediate opening hook: show the central subject in a visually surprising moment that creates curiosity in the first seconds.`,
+      script.title,
+      ...Object.values(script.introduction || {}),
+      ...(script.mainContent?.sections || []).flatMap(section => [
+        section.title,
+        ...(Array.isArray(section.content) ? section.content : [section.content]),
+        ...(section.steps || []).flatMap(step => [step.title, step.description, step.tip]),
+        ...(section.items || []).flatMap(item => [item.title, item.description])
+      ]),
+      ...(script.conclusion?.recap || []),
+      script.conclusion?.finalThought,
+      ...Object.values(script.callToAction || {})
+    ].filter(value => typeof value === 'string' && value.trim());
+    const words = sources.join(' ').replace(/\s+/g, ' ').trim().split(' ');
+    const wordsPerBeat = 50;
+    for (let start = 0; start < words.length && prompts.length < 12; start += wordsPerBeat) {
+      const beat = words.slice(start, start + wordsPerBeat).join(' ');
+      prompts.push(`${beat}. Relevant cinematic B-roll, clear subject, varied composition, natural motion, no captions or on-screen text.`);
     }
-    
-    // Ensure we have at least 3 prompts
     while (prompts.length < 3) {
-      prompts.push('ethereal dreamscape, mystical storytelling, creative visualization');
+      prompts.push(`${script.title || 'Video topic'}. Relevant cinematic B-roll, clear subject, varied composition, no captions or on-screen text.`);
     }
-    
-    return prompts.slice(0, 5); // Limit to 5 for cost control
+    return prompts;
+  }
+
+  selectVisualStyle(script = {}) {
+    const contentType = String(
+      script.metadata?.strategy?.contentType || script.contentType || script.type || ''
+    ).toLowerCase();
+    if (contentType.includes('tutorial') || contentType.includes('how')) return 'modern';
+    if (contentType.includes('list') || contentType.includes('review')) return 'animated';
+    if (contentType.includes('story') || contentType.includes('horror')) return 'cinematic';
+    return 'cinematic';
   }
 
   // Fallback simulation methods

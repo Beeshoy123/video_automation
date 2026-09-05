@@ -75,6 +75,7 @@ class ProductionReadinessService {
       checks.push(await this.executeCheck('video_provider', 'AI video provider', true, () => this.probeVideoProvider(tempDir, Boolean(options.includePaidVideo))));
       checks.push(await this.executeCheck('voice_narration', 'Voice narration', true, () => this.probeNarration(tempDir)));
       checks.push(await this.executeCheck('video_assembly', 'Audio/video assembly', true, () => this.probeVideoAssembly(tempDir)));
+      checks.push(await this.executeCheck('production_artifacts', 'Production artifact diagnostics', false, () => this.probeProductionArtifacts()));
       checks.push(await this.executeCheck('youtube_access', 'YouTube channel access', true, () => this.probeYouTube()));
       checks.push(await this.executeCheck('upload_metadata', 'Upload metadata', true, () => this.probeMetadata()));
 
@@ -145,8 +146,8 @@ class ProductionReadinessService {
   async probeImage(tempDir, includePaidMedia) {
     if (this.probes.image) return this.probes.image({ tempDir, includePaidMedia });
     const generator = new AIVideoGenerator(this.credentialManager.credentials || {});
-    if (!generator.openai && !generator.gemini) {
-      return { status: 'warning', message: 'No AI image provider is configured; gradient visuals will be used.', remediation: 'Configure OpenAI or Gemini image access if generated visuals are required.' };
+    if (!generator.openai && !generator.openrouterImages && !generator.gemini) {
+      return { status: 'warning', message: 'No AI image provider is configured; fallback visuals will be used.', remediation: 'Configure OpenAI, OpenRouter, or Gemini image access if generated visuals are required.' };
     }
     if (!includePaidMedia) {
       return { status: 'skipped', message: 'Provider is configured; the paid live image probe was not requested.', remediation: 'Enable “Include paid image probe” on the next readiness run to verify image generation.' };
@@ -229,6 +230,57 @@ class ProductionReadinessService {
     }
     await runFFmpeg(['-v', 'error', '-i', outputPath, '-f', 'null', '-']);
     return { message: 'FFmpeg created and decoded a local MP4 containing audio and video.', details: { bytes: buffer.length } };
+  }
+
+  async probeProductionArtifacts() {
+    const productions = await this.db.getPipelineOverview(50);
+    const issues = [];
+    for (const production of productions) {
+      const video = production.assets?.finalVideo;
+      if (!video) continue;
+      const videoPath = String(video.path || '');
+      const isMp4 = path.extname(videoPath).toLowerCase() === '.mp4';
+      const exists = isMp4 && await this.fileExists(videoPath);
+      let valid = false;
+      if (exists) valid = await this.validateVideoArtifact(videoPath);
+      if (video.simulated || !isMp4 || !exists || !valid) {
+        issues.push({
+          productionId: production.id,
+          title: production.title,
+          reason: video.simulated ? 'placeholder metadata is recorded' : !isMp4 ? 'final asset is not an MP4' : !exists ? 'final MP4 is missing from disk' : 'final MP4 does not contain valid video and audio streams',
+          repair: 'Open content review and choose Rebuild final video'
+        });
+      }
+    }
+    const intermediateOnly = productions.some(production => String(production.assets?.finalVideo?.path || '').includes('_visual.mp4'));
+    if (intermediateOnly) {
+      issues.push({ reason: 'a visual-only intermediate exists without a completed final MP4', repair: 'Complete the audio/video rebuild before exporting' });
+    }
+    if (!issues.length) return { message: 'Existing production artifacts are real MP4 files present on disk.', details: { productionsChecked: productions.length } };
+    return {
+      status: 'warning',
+      message: `${issues.length} production artifact issue${issues.length === 1 ? '' : 's'} detected before upload.`,
+      remediation: 'Open the affected production review and choose Rebuild final video; readiness will verify the final MP4 on the next run.',
+      details: { productionsChecked: productions.length, issues }
+    };
+  }
+
+  async fileExists(filePath) {
+    try {
+      const stats = await fs.stat(filePath);
+      return stats.isFile() && stats.size > 0;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  async validateVideoArtifact(videoPath) {
+    try {
+      await runFFmpeg(['-v', 'error', '-i', videoPath, '-map', '0:v:0', '-map', '0:a:0', '-f', 'null', '-']);
+      return true;
+    } catch (_error) {
+      return false;
+    }
   }
 
   async probeYouTube() {

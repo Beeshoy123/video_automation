@@ -4,6 +4,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { pathToFileURL } = require('url');
 const axios = require('axios');
+const sharp = require('sharp');
 const { Logger } = require('./logger');
 const { runFFmpeg, checkFFmpeg, ffmpegInstallHint } = require('./ffmpeg');
 const { MediaGenerationService } = require('./media-generation-service');
@@ -18,6 +19,8 @@ class AIVideoGenerator {
     
     // Initialize AI services with graceful fallback
     const openaiKey = resolvedCredentials.openai?.apiKey || process.env.OPENAI_API_KEY;
+    const openrouterKey = resolvedCredentials.openrouter?.apiKey || process.env.OPENROUTER_API_KEY;
+    this.openrouterImageModel = resolvedCredentials.openrouter?.imageModel || process.env.OPENROUTER_IMAGE_MODEL;
     const replicateKey = resolvedCredentials.replicate?.apiKey || process.env.REPLICATE_API_TOKEN || process.env.REPLICATE_API_KEY;
     
     if (openaiKey) {
@@ -25,6 +28,14 @@ class AIVideoGenerator {
       this.logger.info('OpenAI service initialized');
     } else {
       this.logger.warn('OpenAI API key not found - AI features will be simulated');
+    }
+
+    if (openrouterKey && this.openrouterImageModel) {
+      this.openrouterImages = new OpenAI({
+        apiKey: openrouterKey,
+        baseURL: 'https://openrouter.ai/api/v1'
+      });
+      this.logger.info(`OpenRouter image service initialized (model: ${this.openrouterImageModel})`);
     }
     
     if (replicateKey) {
@@ -36,11 +47,12 @@ class AIVideoGenerator {
 
     // Gemini media generation (images + native TTS) — free-tier alternative to OpenAI
     const geminiKey = resolvedCredentials.gemini?.apiKey || process.env.GEMINI_API_KEY;
+    this.geminiImageModel = resolvedCredentials.gemini?.imageModel || process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
     if (geminiKey) {
       try {
         const { GoogleGenAI } = require('@google/genai');
         this.gemini = new GoogleGenAI({ apiKey: geminiKey });
-        this.logger.info('Gemini media service initialized (images + TTS)');
+        this.logger.info(`Gemini media service initialized (image model: ${this.geminiImageModel})`);
       } catch (error) {
         this.logger.warn('Failed to initialize Gemini media service:', error.message);
       }
@@ -84,6 +96,7 @@ class AIVideoGenerator {
       }
 
       const usable = await this.isUsableAudioFile(generatedPath);
+      if (usable) generatedPath = await this.normalizeNarrationAudio(generatedPath);
       this.lastNarrationResult = {
         status: usable ? 'ready' : 'unavailable',
         path: generatedPath,
@@ -104,6 +117,18 @@ class AIVideoGenerator {
       this.logger.error('TTS generation failed:', error);
       throw error;
     }
+  }
+
+  async normalizeNarrationAudio(audioPath) {
+    const normalizedPath = audioPath.replace(/\.[^.]+$/, '_normalized.mp3');
+    await runFFmpeg([
+      '-y', '-i', audioPath,
+      '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000',
+      '-c:a', 'libmp3lame', '-b:a', '160k', normalizedPath
+    ]);
+    await fs.rename(normalizedPath, audioPath);
+    this.logger.info('Narration loudness normalized');
+    return audioPath;
   }
 
   async generateElevenLabsTTS(text, outputPath) {
@@ -195,7 +220,7 @@ class AIVideoGenerator {
     this.logger.info(`Generating ${count} visual assets with style: ${style}`);
 
     try {
-      if (!this.openai && !this.gemini) {
+      if (!this.openai && !this.openrouterImages && !this.gemini) {
         return await this.simulateVisualAssets(prompt, style, count);
       }
 
@@ -212,7 +237,7 @@ class AIVideoGenerator {
       return localPaths;
     } catch (error) {
       this.logger.error('Visual asset generation failed:', error);
-      return await this.simulateVisualAssets(prompt, style, count);
+      throw new Error(`Real visual generation failed: ${error.message}. Fix the configured image provider before continuing.`);
     }
   }
 
@@ -221,6 +246,10 @@ class AIVideoGenerator {
 
     if (this.openai) {
       return await this.generateOpenAIImage(prompt, imagePath);
+    }
+
+    if (this.openrouterImages) {
+      return await this.generateOpenRouterImage(prompt, imagePath);
     }
 
     if (this.gemini) {
@@ -249,13 +278,43 @@ class AIVideoGenerator {
     return imagePath;
   }
 
-  async generateGeminiImage(prompt, imagePath) {
-    const model = process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
-
-    const response = await this.gemini.models.generateContent({
-      model,
-      contents: prompt
+  async generateOpenRouterImage(prompt, imagePath) {
+    const response = await this.openrouterImages.chat.completions.create({
+      model: this.openrouterImageModel,
+      messages: [{ role: 'user', content: prompt }],
+      modalities: ['text', 'image']
     });
+    const message = response.choices?.[0]?.message;
+    const image = message?.images?.find(item => item.image_url?.url)?.image_url?.url
+      || (Array.isArray(message?.content)
+        ? message.content.find(item => item.type === 'image_url')?.image_url?.url
+        : null);
+    if (!image) {
+      throw new Error(`OpenRouter image model ${this.openrouterImageModel} returned no image data`);
+    }
+    if (image.startsWith('data:')) {
+      const match = image.match(/^data:[^;]+;base64,(.+)$/);
+      if (!match) throw new Error('OpenRouter returned an invalid image data URL');
+      await fs.writeFile(imagePath, Buffer.from(match[1], 'base64'));
+    } else {
+      await this.downloadImage(image, imagePath);
+    }
+    return imagePath;
+  }
+
+  async generateGeminiImage(prompt, imagePath) {
+    const model = this.geminiImageModel;
+
+    let response;
+    try {
+      response = await this.gemini.models.generateContent({
+        model,
+        contents: prompt
+      });
+    } catch (error) {
+      const message = error?.message || String(error);
+      throw new Error(`Gemini image request failed for model ${model}: ${message}`);
+    }
 
     const parts = response.candidates?.[0]?.content?.parts || [];
     const imagePart = parts.find(part => part.inlineData?.data);
@@ -386,9 +445,12 @@ class AIVideoGenerator {
       if (segment.type === 'image') args.push('-loop', '1', '-t', Number(segment.duration).toFixed(2), '-framerate', '30', '-i', segment.path);
       else args.push('-stream_loop', '-1', '-i', segment.path);
     }
-    const filters = segments.map((segment, index) =>
-      `[${index}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p,trim=duration=${Number(segment.duration).toFixed(2)},setpts=PTS-STARTPTS[v${index}]`
-    );
+    const filters = segments.map((segment, index) => {
+      const duration = Number(segment.duration);
+      const fade = Math.min(0.35, Math.max(0.1, duration / 4));
+      const fadeStart = Math.max(0, duration - fade);
+      return `[${index}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p,trim=duration=${duration.toFixed(2)},setpts=PTS-STARTPTS,fade=t=in:st=0:d=${fade.toFixed(2)},fade=t=out:st=${fadeStart.toFixed(2)}:d=${fade.toFixed(2)}[v${index}]`;
+    });
     filters.push(`${segments.map((_, index) => `[v${index}]`).join('')}concat=n=${segments.length}:v=1:a=0[vout]`);
     args.push('-filter_complex', filters.join(';'), '-map', '[vout]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', outputPath);
     await runFFmpeg(args);
@@ -797,7 +859,11 @@ class AIVideoGenerator {
       : outputPath;
 
     const videoInput = options.loopVideo ? ['-stream_loop', '-1', '-i', videoPath] : ['-i', videoPath];
-    await runFFmpeg(['-y', ...videoInput, '-i', audioPath, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-shortest', muxPath]);
+    await runFFmpeg([
+      '-y', ...videoInput, '-i', audioPath,
+      '-map', '0:v:0', '-map', '1:a:0',
+      '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', '-shortest', muxPath
+    ]);
 
     if (muxPath !== outputPath) {
       await fs.rename(muxPath, outputPath);
@@ -805,6 +871,36 @@ class AIVideoGenerator {
 
     this.logger.info('Audio added to video successfully');
     return outputPath;
+  }
+
+  async burnCaptionsIntoVideo(videoPath, captionsPath) {
+    if (!captionsPath || path.extname(captionsPath).toLowerCase() !== '.srt') return videoPath;
+    await fs.access(captionsPath);
+    const captionedPath = videoPath.replace(/\.mp4$/i, '_captioned.mp4');
+    const subtitleFile = captionsPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
+    await runFFmpeg([
+      '-y', '-i', videoPath,
+      '-vf', `subtitles='${subtitleFile}'`,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+      '-c:a', 'copy', '-movflags', '+faststart', captionedPath
+    ]);
+    await fs.rename(captionedPath, videoPath);
+    this.logger.info('Captions burned into video successfully');
+    return videoPath;
+  }
+
+  async validateVideoFile(videoPath) {
+    if (typeof videoPath !== 'string' || path.extname(videoPath).toLowerCase() !== '.mp4') {
+      throw new Error('Final video is not an MP4 file');
+    }
+    const stats = await fs.stat(videoPath).catch(() => null);
+    if (!stats?.isFile() || stats.size < 1000) throw new Error('Final MP4 is missing or empty');
+    try {
+      await runFFmpeg(['-v', 'error', '-i', videoPath, '-map', '0:v:0', '-map', '0:a:0', '-f', 'null', '-']);
+    } catch (error) {
+      throw new Error(`Final MP4 failed video/audio decoding: ${error.stderr || error.message}`);
+    }
+    return { bytes: stats.size };
   }
 
   async isUsableAudioFile(audioPath) {
@@ -852,24 +948,38 @@ class AIVideoGenerator {
     this.logger.info('Generating custom thumbnail...');
 
     try {
-      if (!this.openai && !this.gemini) {
+      if (!this.openai && !this.openrouterImages && !this.gemini) {
         return await this.simulateThumbnailGeneration(script, style);
       }
 
-      const prompt = `YouTube thumbnail for "${script.title}", ${style} style, eye-catching, high contrast text, professional design, clickable, engaging`;
-      const thumbnailPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_${Date.now()}.png`);
+      const timestamp = Date.now();
+      const thumbnailPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_${timestamp}.png`);
+      const finalPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_${timestamp}_final.jpg`);
+      const shortTitle = String(script.title || 'New video').replace(/[^\w\s!?'-]/g, '').trim().split(/\s+/).slice(0, 5).join(' ');
+      const prompt = `YouTube thumbnail background about "${shortTitle}", ${style} style, one clear central subject, dramatic lighting, strong contrast, uncluttered composition, empty darker space on the left for a title overlay, no text, no logos, no watermark`;
 
       await this.generateImage(prompt, thumbnailPath);
+      await this.createThumbnailOverlay(thumbnailPath, finalPath, shortTitle);
 
       return {
-        path: thumbnailPath,
-        dimensions: { width: 1536, height: 1024 },
-        fileSize: await this.getFileSize(thumbnailPath)
+        path: finalPath,
+        dimensions: { width: 1280, height: 720 },
+        fileSize: await this.getFileSize(finalPath)
       };
     } catch (error) {
       this.logger.error('Thumbnail generation failed:', error);
       return await this.simulateThumbnailGeneration(script, style);
     }
+  }
+
+  async createThumbnailOverlay(imagePath, outputPath, title) {
+    const words = title.split(/\s+/);
+    const midpoint = Math.ceil(words.length / 2);
+    const lines = [words.slice(0, midpoint).join(' '), words.slice(midpoint).join(' ')].filter(Boolean);
+    const escapeXml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+    const text = lines.map((line, index) => `<text x="72" y="${425 + index * 78}" class="title">${escapeXml(line.toUpperCase())}</text>`).join('');
+    const overlay = Buffer.from(`<svg width="1280" height="720" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="shade" x1="0" x2="1"><stop offset="0" stop-color="#05070b" stop-opacity=".88"/><stop offset=".62" stop-color="#05070b" stop-opacity=".15"/><stop offset="1" stop-color="#05070b" stop-opacity="0"/></linearGradient></defs><rect width="1280" height="720" fill="url(#shade)"/><rect x="72" y="150" width="92" height="10" rx="5" fill="#efb866"/>${text}<style>.title{font-family:Arial,sans-serif;font-size:64px;font-weight:800;fill:#fff;stroke:#05070b;stroke-width:3px;paint-order:stroke;}</style></svg>`);
+    await sharp(imagePath).resize(1280, 720, { fit: 'cover' }).composite([{ input: overlay }]).jpeg({ quality: 90 }).toFile(outputPath);
   }
 
   async getFileSize(filePath) {
