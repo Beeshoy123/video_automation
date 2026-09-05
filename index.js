@@ -807,6 +807,20 @@ class YouTubeAutomationAgent {
       }
     });
 
+    this.app.post('/api/niche/research', protect, async (req, res) => {
+      try {
+        const niche = String(req.body?.niche || '').trim();
+        if (!niche) return res.status(400).json({ success: false, error: 'Tell us what you are interested in first.' });
+        if (!this.agents.strategy || typeof this.agents.strategy.findNicheSignals !== 'function') {
+          return res.status(503).json({ success: false, error: 'Niche research is not available until the strategy agent is configured.' });
+        }
+        const result = await this.agents.strategy.findNicheSignals({ niche, region: req.body?.region });
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+    });
+
     this.app.post('/api/operator/start', protect, async (req, res) => {
       try {
         if (this.setupRequired || !this.agents.strategy) {
@@ -1195,7 +1209,14 @@ class YouTubeAutomationAgent {
 
     // Step 1: Strategy
     const strategy = await this.runGenerationStage(jobId, 'strategy', 10, async () => {
-      const generated = await this.agents.strategy.generateContentStrategy(topic);
+      const generated = await this.agents.strategy.generateContentStrategy(topic) || {
+        topic: topic || 'A new video idea',
+        angle: 'A clear, engaging story built for short-form viewers',
+        targetAudience: profile.target_audience || 'General audience',
+        contentType: style || profile.default_style || 'story',
+        keywords: String(topic || 'video idea').split(/\s+/).filter(Boolean).slice(0, 8),
+        createdAt: new Date().toISOString()
+      };
       const contentStyles = new Set(['tutorial', 'explainer', 'list', 'review', 'story', 'cartoon']);
       const requestedStyle = style || profile.default_style || null;
       if (requestedStyle && contentStyles.has(requestedStyle.toLowerCase())) {

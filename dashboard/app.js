@@ -1,6 +1,7 @@
 const ui = {
   state: null,
   currentView: 'overview',
+  overviewStatus: 'Ready',
   refreshing: false,
   toastTimer: null,
   retentionSnapshotId: null
@@ -120,7 +121,7 @@ function renderDashboard() {
   $('#system-dot').classList.toggle('online', state.system.initialized && !state.system.automationPaused && !state.system.setupRequired);
   $('#automation-toggle').textContent = state.system.automationPaused ? 'Resume automation' : 'Pause automation';
   $('#automation-toggle').disabled = state.system.setupRequired;
-  $('#generate-button').disabled = state.system.setupRequired;
+  $('#generate-button')?.setAttribute('aria-disabled', String(state.system.setupRequired));
   $('#top-generate-button').disabled = state.system.setupRequired;
   $('#review-badge').textContent = reviews.length;
   $('#review-badge').classList.toggle('hidden', reviews.length === 0);
@@ -131,6 +132,9 @@ function renderDashboard() {
   $('#stat-scheduled').textContent = scheduled.length;
   $('#stat-published').textContent = state.stats.published || 0;
   $('#stat-score').textContent = state.analytics.averagePerformanceScore ? `${state.analytics.averagePerformanceScore}/100` : '—';
+
+  renderLiveStageBar(state.jobs, state.pipeline);
+  renderReadyState(state.pipeline);
 
   renderReviews(reviews);
   renderJobs(actionableJobs.length ? actionableJobs : state.jobs.slice(0, 5));
@@ -144,6 +148,53 @@ function renderDashboard() {
   renderReadiness(state.readiness);
   renderOperator(state.channelStrategy, state.operatorRuns || [], { ...state.system, readiness: state.readiness });
   populateSettings(state.profile, state.settings, state.system.videoProviders || []);
+}
+
+function renderLiveStageBar(jobs = [], pipeline = []) {
+  const stageBar = $('#live-stage-bar');
+  if (!stageBar) return;
+  const activeJob = jobs.find(job => ['queued', 'running', 'failed', 'interrupted'].includes(job.status));
+  const latest = pipeline[0] || {};
+  ui.overviewStatus = activeJob?.status === 'failed' || activeJob?.status === 'interrupted'
+    ? 'Needs attention'
+    : activeJob ? 'In progress'
+      : latest.review_status === 'needs_review' || latest.review_status === 'needs_attention' ? 'Finished'
+        : 'Ready';
+  const statusNode = $('#live-status-label');
+  if (!statusNode) return;
+  statusNode.textContent = ui.overviewStatus;
+  statusNode.className = ui.overviewStatus === 'Ready' || ui.overviewStatus === 'Finished' ? 'ready' : ui.overviewStatus === 'In progress' ? 'active' : 'attention';
+  statusNode.setAttribute('aria-label', `Video status: ${ui.overviewStatus}`);
+  const stageSteps = $('#live-stage-steps');
+  if (!stageSteps) return;
+  const stage = activeJob?.stage || latest.review_status || 'strategy';
+  const stageMap = { strategy: 'brief', script: 'script', thumbnail: 'visuals', seo: 'visuals', production: 'assembly', quality_review: 'review', needs_review: 'review', needs_attention: 'review', approved: 'review', published: 'review' };
+  const activeStage = stageMap[stage] || stage;
+  const stages = ['brief', 'script', 'visuals', 'voice', 'assembly', 'review'];
+  const activeIndex = Math.max(0, stages.indexOf(activeStage));
+  stageSteps.querySelectorAll('[data-stage]').forEach((node, index) => {
+    const isComplete = index < activeIndex;
+    const isActive = node.dataset.stage === activeStage && Boolean(activeJob || latest.review_status);
+    node.classList.toggle('active', isActive);
+    node.classList.toggle('complete', isComplete);
+    node.title = node.textContent;
+  });
+  stageSteps.querySelectorAll('i').forEach((node, index) => node.classList.toggle('complete', index < activeIndex));
+}
+
+function renderReadyState(pipeline = []) {
+  const panel = $('#ready-state-panel');
+  if (!panel) return;
+  const item = pipeline.find(entry => ['needs_review', 'needs_attention'].includes(entry.review_status));
+  if (!item) {
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
+    return;
+  }
+  const title = item.title || item.topic || 'Your latest video';
+  const attention = item.review_status === 'needs_attention';
+  panel.classList.remove('hidden');
+  panel.innerHTML = `<div class="ready-state-heading"><div><span class="ready-kicker">${attention ? 'FINISHING TOUCHES' : 'READY FOR REVIEW'}</span><h2>${escapeHTML(title)}</h2><p>${attention ? 'A few checks need your attention before this can be approved.' : 'Your video is ready.'}</p></div><span class="ready-state-icon">${attention ? '!' : '✓'}</span></div><div class="ready-checks"><span class="${item.hasVideo || item.assetUrls?.video ? 'done' : ''}">✓ Video rendered</span><span class="${item.audioReady || item.assets?.audio?.status === 'ready' ? 'done' : ''}">✓ Narration ready</span><span class="${item.captionsReady || item.assets?.captions?.status === 'ready' ? 'done' : ''}">✓ Captions generated</span><span class="${item.rightsReviewed || item.provenance?.status === 'verified' || item.provenance?.status === 'not_required' ? 'done' : ''}">✓ Rights reviewed</span><span class="attention">! Approval required</span></div><div class="ready-state-actions"><button type="button" class="button secondary" data-open-content="${escapeHTML(item.id)}">Preview video</button><button type="button" class="button primary" data-open-content="${escapeHTML(item.id)}">Open review</button></div>`;
 }
 
 function renderReadiness(readiness = {}) {
@@ -197,25 +248,48 @@ function renderJobs(jobs) {
     return;
   }
   const stages = ['strategy', 'script', 'thumbnail', 'seo', 'production', 'quality_review'];
+  const stageLabels = ['Brief', 'Script', 'Visuals', 'Voice', 'Assembly', 'Review'];
   container.innerHTML = jobs.slice(0, 6).map(job => {
     const checkpoints = Array.isArray(job.checkpoints) ? job.checkpoints : [];
+    const checkpointMap = new Map(checkpoints.map(item => [item.stage, item]));
     const completed = new Set(checkpoints.filter(item => item.status === 'completed').map(item => item.stage));
     const mediaTasks = Array.isArray(job.mediaTasks) ? job.mediaTasks : [];
     const mediaCompleted = mediaTasks.filter(item => item.status === 'succeeded').length;
     const mediaProviders = [...new Set(mediaTasks.map(item => label(item.provider)))].join(', ');
     const resumeFrom = stages.find(stage => !completed.has(stage)) || 'quality_review';
     const recoverable = ['failed', 'interrupted'].includes(job.status);
+    const activeIndex = Math.max(0, stages.indexOf(job.stage));
+    const stageStatus = (stage, index) => {
+      const checkpoint = checkpointMap.get(stage);
+      if (checkpoint?.status === 'failed' || (job.status === 'failed' && stage === job.stage)) return 'failed';
+      if (checkpoint?.status === 'completed' || index < activeIndex || (job.status === 'completed' && index === stages.length - 1)) return 'complete';
+      if (['running', 'queued'].includes(job.status) && stage === job.stage) return 'running';
+      if (job.status === 'interrupted' && stage === job.stage) return 'attention';
+      return 'waiting';
+    };
+    const stageCards = stages.map((stage, index) => {
+      const status = stageStatus(stage, index);
+      const symbol = { complete: '✓', running: '•', waiting: '○', failed: '×', attention: '!' }[status];
+      return `<div class="generation-stage ${status}"><span class="generation-stage-icon">${symbol}</span><strong>${stageLabels[index]}</strong><small>${label(status)}</small></div>`;
+    }).join('<i class="generation-connector"></i>');
+    const progress = Math.max(0, Math.min(100, Number(job.progress || 0)));
+    const elapsedMs = job.created_at ? Date.now() - new Date(job.created_at).getTime() : 0;
+    const eta = progress > 2 && elapsedMs > 0 ? `${Math.max(1, Math.ceil((elapsedMs * (100 - progress) / progress) / 60000))} min left` : 'Estimating time';
+    const cost = job.details?.actualCost?.amount ?? job.details?.cost?.amount ?? job.details?.estimatedCost?.amount;
     return `
-    <article class="job-card">
+    <article class="job-card detailed-job-card">
       <div class="job-meta">
         <strong>${escapeHTML(job.title || job.topic || 'Agent-selected topic')}</strong>
         <div class="meta-line">${statusChip(job.status)} · ${escapeHTML(label(job.stage))} · ${timeAgo(job.updated_at)}</div>
+        <div class="generation-stage-track">${stageCards}</div>
+        <div class="generation-meta"><span>${progress}% complete</span><span>${escapeHTML(eta)}</span>${cost !== undefined ? `<span>Cost ${escapeHTML(String(cost))}</span>` : '<span>Cost pending</span>'}</div>
         ${checkpoints.length ? `<div class="checkpoint-line">${completed.size}/${stages.length} stages saved${job.details?.reusedStages?.length ? ` · ${job.details.reusedStages.length} reused` : ''}</div>` : ''}
         ${mediaTasks.length ? `<div class="checkpoint-line">Video: ${mediaCompleted}/${mediaTasks.length} clips ready · ${escapeHTML(mediaProviders)}</div>` : ''}
-        <div class="progress"><i style="width:${Math.max(0, Math.min(100, job.progress || 0))}%"></i></div>
+        ${mediaCompleted && job.production_id ? `<div class="partial-preview-strip"><img src="/api/content/${encodeURIComponent(job.production_id)}/asset/thumbnail" alt="Partial production preview"><span>${mediaCompleted} visual${mediaCompleted === 1 ? '' : 's'} ready to preview</span></div>` : ''}
+        <div class="progress"><i style="width:${progress}%"></i></div>
       </div>
       ${['queued', 'running'].includes(job.status) ? `<button class="text-button" data-cancel-job="${escapeHTML(job.id)}">Cancel</button>` : ''}
-      ${recoverable ? `<div class="job-recovery"><select data-resume-stage-for="${escapeHTML(job.id)}" aria-label="Stage to resume from">${stages.map(stage => `<option value="${stage}" ${stage === resumeFrom ? 'selected' : ''}>${escapeHTML(label(stage))}</option>`).join('')}</select><button class="button secondary small" data-resume-job="${escapeHTML(job.id)}">Resume</button></div>` : ''}
+      ${recoverable ? `<div class="job-recovery"><select data-resume-stage-for="${escapeHTML(job.id)}" aria-label="Stage to retry from">${stages.map(stage => `<option value="${stage}" ${stage === resumeFrom ? 'selected' : ''}>${escapeHTML(stageLabels[stages.indexOf(stage)])}</option>`).join('')}</select><button class="button secondary small" data-resume-job="${escapeHTML(job.id)}">Retry from stage</button></div>` : ''}
     </article>`;
   }).join('');
 }
@@ -565,8 +639,10 @@ function populateSettings(profile = {}, settings = {}, providers = []) {
 
 function switchView(view) {
   ui.currentView = view;
-  const titles = { overview: 'Overview', pipeline: 'Content pipeline', calendar: 'Calendar & ideas', operator: 'Autonomous operator', readiness: 'Production readiness', analytics: 'Analytics', settings: 'Channel setup' };
-  $('#workspace-view-title').textContent = titles[view] || 'Overview';
+  const titles = { overview: 'Overview', pipeline: 'Content pipeline', calendar: 'Calendar & ideas', operator: 'Niche & ideas', readiness: 'Production readiness', analytics: 'Analytics', settings: 'Channel setup' };
+  const workspaceTitle = $('#workspace-view-title');
+  if (workspaceTitle) workspaceTitle.textContent = view === 'overview' ? ui.overviewStatus : titles[view] || 'Overview';
+  if (ui.state) renderLiveStageBar(ui.state.jobs || [], ui.state.pipeline || []);
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `${view}-view`));
   location.hash = view;
@@ -1056,6 +1132,20 @@ async function mutate(url, method, body, successMessage) {
 }
 
 document.addEventListener('click', async event => {
+  const useNiche = event.target.closest('[data-use-niche]');
+  if (useNiche) {
+    const niche = useNiche.dataset.useNiche;
+    const strategyForm = $('#strategy-form');
+    if (strategyForm) {
+      strategyForm.elements.contentPillars.value = niche;
+      strategyForm.elements.objective.value = `Help people learn and make progress with ${niche}.`;
+      strategyForm.elements.audience.value = `Beginners interested in ${niche}`;
+      strategyForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      showToast('Direction added below. Review the audience and save when ready.');
+    }
+    return;
+  }
+
   const templatePreview = event.target.closest('[data-template-preview]');
   if (templatePreview) {
     const templateId = templatePreview.dataset.templatePreview;
@@ -1478,7 +1568,7 @@ document.addEventListener('change', event => {
   }
 });
 
-$('#generate-button').addEventListener('click', () => $('#generate-dialog').showModal());
+$('#generate-button')?.addEventListener('click', () => $('#generate-dialog').showModal());
 $('#overview-create-button').addEventListener('click', () => $('#generate-dialog').showModal());
 $('#top-generate-button').addEventListener('click', () => $('#generate-dialog').showModal());
 $('#global-search-button').addEventListener('click', () => {
@@ -1490,6 +1580,26 @@ $('#global-search-input').addEventListener('input', event => renderGlobalSearch(
 $('#notifications-button').addEventListener('click', () => {
   switchView('overview');
   document.querySelector('#notification-list')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+document.querySelectorAll('[data-niche-suggestion]').forEach(button => {
+  button.addEventListener('click', () => {
+    $('#niche-finder-form [name="niche"]').value = button.dataset.nicheSuggestion;
+    $('#niche-finder-form [name="niche"]').focus();
+  });
+});
+$('#niche-finder-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const niche = event.currentTarget.elements.niche.value.trim();
+  if (!niche) return;
+  $('#loading').classList.add('active');
+  try {
+    const response = await api('/api/niche/research', { method: 'POST', body: JSON.stringify({ niche }) });
+    renderNicheFinderResults(response.result || {});
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally {
+    $('#loading').classList.remove('active');
+  }
 });
 function updateCreatePreview() {
   const form = $('#generate-form');
@@ -1550,7 +1660,7 @@ document.querySelectorAll('[data-template]').forEach(button => {
   });
 });
 $('#add-idea-button').addEventListener('click', () => $('#idea-dialog').showModal());
-$('#refresh-button').addEventListener('click', () => refreshDashboard());
+$('#refresh-button')?.addEventListener('click', () => refreshDashboard());
 $('#pipeline-filter').addEventListener('change', () => renderPipeline(ui.state?.pipeline || []));
 
 $('#run-readiness-button').addEventListener('click', async event => {
@@ -1587,6 +1697,17 @@ function strategyFormData(status = ui.state?.channelStrategy?.status || 'draft')
   };
 }
 
+function renderNicheFinderResults(result) {
+  const container = $('#niche-finder-results');
+  if (!container) return;
+  const opportunities = Array.isArray(result.opportunities) ? result.opportunities : [];
+  const signals = Array.isArray(result.signals) ? result.signals : [];
+  container.classList.remove('hidden');
+  container.innerHTML = `<div class="niche-result-summary"><div><span class="niche-step">2</span><div><h3>Your starting direction</h3><p>${escapeHTML(result.summary || 'Research is ready.')}</p></div></div><button type="button" class="button secondary small" data-use-niche="${escapeHTML(result.niche)}">Use this direction</button></div>
+    ${opportunities.length ? `<div class="niche-opportunities"><h3>Video angles worth exploring</h3><div class="niche-opportunity-grid">${opportunities.map((item, index) => `<article><span>${index + 1}</span><strong>${escapeHTML(item)}</strong></article>`).join('')}</div></div>` : ''}
+    ${signals.length ? `<div class="niche-signals"><h3>Recent videos in this space</h3>${signals.slice(0, 5).map(signal => `<a class="niche-signal" href="${escapeHTML(signal.url)}" target="_blank" rel="noopener"><span><strong>${escapeHTML(signal.title)}</strong><small>${escapeHTML(signal.channel)} · ${Number(signal.viewCount || 0).toLocaleString()} views</small></span><span aria-hidden="true">↗</span></a>`).join('')}</div>` : '<p class="niche-empty">No live videos were returned. You can still use the suggested angles as an evergreen starting point.</p>'}`;
+}
+
 $('#strategy-form').addEventListener('submit', async event => {
   event.preventDefault();
   await mutate('/api/operator/strategy', 'PUT', strategyFormData(), 'Channel strategy saved.').catch(() => {});
@@ -1594,11 +1715,11 @@ $('#strategy-form').addEventListener('submit', async event => {
 
 $('#activate-operator-button').addEventListener('click', async () => {
   if (!$('#strategy-form').reportValidity()) return;
-  await mutate('/api/operator/start', 'POST', strategyFormData('active'), 'Autonomous operator started.').catch(() => {});
+  await mutate('/api/operator/start', 'POST', strategyFormData('active'), 'Video planning started.').catch(() => {});
 });
 
 $('#pause-operator-button').addEventListener('click', async () => {
-  await mutate('/api/operator/pause', 'POST', {}, 'Autonomous operator paused.').catch(() => {});
+  await mutate('/api/operator/pause', 'POST', {}, 'Video planning paused.').catch(() => {});
 });
 
 $('#cancel-operator-run').addEventListener('click', async event => {
@@ -1611,7 +1732,7 @@ $('#cancel-operator-run').addEventListener('click', async event => {
 $('#resume-operator-run').addEventListener('click', async event => {
   const runId = event.currentTarget.dataset.runId;
   if (runId && confirm('Resume this operator run from its saved editorial plan and generation checkpoints?')) {
-    await mutate(`/api/operator/runs/${encodeURIComponent(runId)}/resume`, 'POST', {}, 'Autonomous operator resumed.').catch(() => {});
+    await mutate(`/api/operator/runs/${encodeURIComponent(runId)}/resume`, 'POST', {}, 'Video planning resumed.').catch(() => {});
   }
 });
 

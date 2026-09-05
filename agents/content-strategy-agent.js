@@ -251,9 +251,14 @@ class ContentStrategyAgent {
     ].filter((query, index, arr) => query && arr.indexOf(query) === index).slice(0, 5);
 
     const signals = [];
-    const youtube = this.credentials && typeof this.credentials.getYouTubeClient === 'function'
-      ? this.credentials.getYouTubeClient()
-      : null;
+    let youtube = null;
+    try {
+      youtube = this.credentials && typeof this.credentials.getYouTubeClient === 'function'
+        ? this.credentials.getYouTubeClient()
+        : null;
+    } catch (error) {
+      this.logger.info(`Using offline niche angles because YouTube access is unavailable: ${error.message}`);
+    }
 
     if (youtube) {
       for (const query of queries) {
@@ -308,6 +313,15 @@ class ContentStrategyAgent {
 
     let summary = `Niche validation for "${niche}" returned ${dedupedSignals.length} relevant recent signals.`;
     let opportunities = dedupedSignals.slice(0, 5).map(signal => signal.title);
+    if (!opportunities.length) {
+      opportunities = [
+        `${niche} for complete beginners`,
+        `The most common ${niche} mistakes and how to avoid them`,
+        `A simple weekly routine for getting better at ${niche}`,
+        `Affordable tools and resources for ${niche}`,
+        `What I wish I knew before starting ${niche}`
+      ];
+    }
 
     if (this.aiTextService && typeof this.aiTextService.isAvailable === 'function' && this.aiTextService.isAvailable()) {
       try {

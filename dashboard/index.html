@@ -18,17 +18,13 @@
         <div class="nav-group nav-all-items">
           <button class="nav-item active" data-view="overview"><span>⌂</span> Overview</button>
           <button class="nav-item" data-view="pipeline"><span>≋</span> Pipeline <b id="review-badge" class="badge hidden">0</b></button>
-          <button class="nav-item" data-view="calendar"><span>□</span> Calendar & ideas</button>
-          <button class="nav-item" data-view="operator"><span>◎</span> Autonomous operator</button>
+          <button class="nav-item" data-view="calendar"><span>□</span> Calendar &amp; ideas</button>
+          <button class="nav-item" data-view="operator"><span>◎</span> Niche &amp; ideas</button>
           <button class="nav-item" data-view="readiness"><span>✓</span> Production readiness</button>
           <button class="nav-item" data-view="analytics"><span>⌁</span> Analytics</button>
           <button class="nav-item" data-view="settings"><span>⚙</span> Channel setup</button>
           
         
-        </div>
-        <div class="nav-command-actions top-actions">
-          <button id="refresh-button" class="icon-button" title="Refresh dashboard" aria-label="Refresh dashboard">↻</button>
-          <button id="generate-button" class="button primary">＋ Generate video</button>
         </div>
       </nav>
       <div class="sidebar-footer">
@@ -41,7 +37,7 @@
       <div id="loading" class="loading-bar"></div>
       <div id="toast" class="toast hidden" role="status"></div>
       <header class="workspace-topbar">
-        <div class="workspace-context"><span class="eyebrow">VIDEO AUTOMATION STUDIO</span><strong id="workspace-view-title">Overview</strong></div>
+        <div class="workspace-context"><div id="live-stage-bar" class="live-stage-bar" aria-label="Video production status"><span id="live-status-label">Ready</span><div id="live-stage-steps" class="live-stage-steps" aria-label="Video production stages"><span data-stage="brief">Brief</span><i></i><span data-stage="script">Script</span><i></i><span data-stage="visuals">Visuals</span><i></i><span data-stage="voice">Voice</span><i></i><span data-stage="assembly">Assembly</span><i></i><span data-stage="review">Review</span></div></div></div>
         <div class="workspace-actions">
           <button id="global-search-button" class="icon-button" type="button" title="Search workspace" aria-label="Search workspace">⌕</button>
           <button id="notifications-button" class="icon-button notification-button" type="button" title="Open notifications" aria-label="Open notifications"><span aria-hidden="true">♢</span><b id="notifications-badge" class="notification-dot hidden"></b></button>
@@ -59,6 +55,7 @@
             <span><i>✓</i> Review gates</span>
           </div>
         </header>
+        <article id="ready-state-panel" class="ready-state-panel hidden"></article>
         <div id="setup-banner" class="setup-banner hidden"><div><strong>Finish setup to activate your agents</strong><p>The operator console is ready, but generation and publishing stay disabled until credentials are configured.</p></div><code>npm run walkthrough</code></div>
         <section class="overview-launcher" aria-labelledby="launcher-title">
           <div class="launcher-heading">
@@ -124,7 +121,16 @@
       </section>
 
       <section id="operator-view" class="view">
-        <div class="section-intro"><div><h2>Autonomous Channel Operator</h2><p>Set the destination once. Lumen researches, plans, produces, and manages the channel workflow around it.</p></div><span id="operator-strategy-status" class="status">Not configured</span></div>
+        <div class="section-intro"><div><h2>Find your video direction</h2><p>Start with a topic you care about. We’ll look for demand, beginner-friendly angles, and useful video opportunities.</p></div><span id="operator-strategy-status" class="status">Not configured</span></div>
+        <article class="panel niche-finder-panel">
+          <div class="niche-finder-heading"><div><span class="niche-step">1</span><div><h2>What could you make videos about?</h2><p>You don’t need a perfect niche. Start with an interest, skill, job, hobby, or problem you understand.</p></div></div><span class="niche-example">Example: home workouts for busy beginners</span></div>
+          <form id="niche-finder-form" class="niche-finder-form">
+            <label class="niche-input"><span class="visually-hidden">Topic or interest</span><input name="niche" maxlength="160" placeholder="Type an interest or audience..." required><button type="submit" class="button primary">Find opportunities</button></label>
+            <div class="niche-suggestions" aria-label="Example topics"><button type="button" data-niche-suggestion="budget travel for students">Budget travel</button><button type="button" data-niche-suggestion="simple AI tools for beginners">Simple AI tools</button><button type="button" data-niche-suggestion="healthy meals for busy people">Healthy meals</button><button type="button" data-niche-suggestion="history stories people remember">History stories</button></div>
+          </form>
+          <div id="niche-finder-results" class="niche-finder-results hidden"></div>
+        </article>
+        <div class="advanced-operator-heading"><div><h2>Automate this direction</h2><p>Once you find an angle you like, the optional video planner can plan and produce videos for you.</p></div></div>
         <div class="operator-grid">
           <form id="strategy-form" class="panel settings-form">
             <div class="panel-heading"><div><p class="eyebrow">CHANNEL MANDATE</p><h2>What should this channel achieve?</h2></div></div>
@@ -140,7 +146,7 @@
               <label class="full-row"><span>Success metric</span><input name="successMetric" maxlength="300" placeholder="Qualified subscribers and returning viewers"></label>
               <label class="full-row"><span>Boundaries and constraints</span><textarea name="constraints" rows="3" maxlength="2000" placeholder="No hype, no unverified statistics, explain costs and tradeoffs."></textarea></label>
             </div>
-            <p class="callout">The operator uses YouTube trend signals, configured competitors, and channel history. Publishing still obeys your quality, factual-review, rights, and approval gates.</p>
+            <p class="callout">Video planning uses YouTube trend signals, configured competitors, and channel history. Publishing still obeys your quality, factual-review, rights, and approval gates.</p>
             <div class="form-actions"><button type="submit" class="button secondary">Save strategy</button><button id="activate-operator-button" type="button" class="button primary">Activate & run now</button><button id="pause-operator-button" type="button" class="button danger hidden">Pause operator</button></div>
           </form>
           <div class="operator-side">
