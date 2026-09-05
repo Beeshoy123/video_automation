@@ -266,6 +266,18 @@
   <dialog id="generate-dialog" class="dialog visual-create-dialog">
     <form id="generate-form" class="visual-create-form" method="dialog">
       <div class="dialog-heading"><div><p class="eyebrow">VISUAL CREATE STUDIO</p><h2>Generate a video</h2><p class="studio-dialog-subtitle">Shape the first frame, then let the production pipeline build the story.</p></div><button type="button" class="close-button" data-close>×</button></div>
+      <section class="create-mode-switch" aria-labelledby="create-mode-heading">
+        <div><p class="eyebrow">WORKFLOW MODE</p><h3 id="create-mode-heading">What are you making?</h3></div>
+        <div class="segmented-control" role="group" aria-label="Generation mode">
+          <button type="button" class="selected" data-generation-mode="standard">Standard video</button>
+          <button type="button" data-generation-mode="campaign">Campaign clip</button>
+        </div>
+      </section>
+      <section id="campaign-options" class="campaign-options hidden" aria-labelledby="campaign-heading">
+        <div class="form-section-heading"><span class="step-number">C</span><div><h3 id="campaign-heading">Campaign setup</h3><p>Use approved source footage and required campaign rules.</p></div></div>
+        <label><span>Campaign</span><select name="campaignId"><option value="content-rewards-mw4">Content Rewards · MW4 Open Beta</option></select></label>
+        <p class="callout">Campaign clip mode is prepared for approved footage, required overlays, logo watermarking, and compliance checks.</p>
+      </section>
       <div class="create-studio-layout">
         <aside class="create-preview-panel">
           <div class="create-preview-frame" data-create-preview>

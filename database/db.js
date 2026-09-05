@@ -731,7 +731,7 @@ class Database {
        FROM productions p
        LEFT JOIN production_snapshots ps ON ps.production_id = p.id
        LEFT JOIN content_reviews cr ON cr.production_id = p.id
-       WHERE p.id = ?`,
+      WHERE p.id = ? AND p.status != 'rejected'`,
       [productionId]
     );
     if (!row) return null;

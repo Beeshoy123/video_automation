@@ -416,6 +416,13 @@ label small { color: var(--muted); font-weight: 400; }
 .visually-hidden-select { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .create-studio-footer { display: flex; align-items: center; justify-content: space-between; gap: 15px; border-top: 1px solid var(--line); padding-top: 16px; }
 .create-studio-footer .callout { flex: 1; margin: 0; }
+.create-mode-switch { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 18px; padding: 14px; border: 1px solid rgba(217,154,78,.25); border-radius: 12px; background: rgba(217,154,78,.045); }
+.create-mode-switch h3 { margin: 2px 0 0; font-size: 16px; }
+.segmented-control { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: rgba(7,10,14,.58); }
+.segmented-control button { border: 0; border-radius: 7px; padding: 9px 12px; color: var(--muted); background: transparent; font-size: 11px; font-weight: 700; cursor: pointer; }
+.segmented-control button.selected { color: #17110a; background: var(--accent); }
+.campaign-options { display: grid; gap: 12px; margin-bottom: 18px; padding: 14px; border: 1px solid rgba(114,165,255,.28); border-radius: 12px; background: rgba(114,165,255,.06); }
+.campaign-options .form-section-heading { margin: 0; }
 .form-section { display: grid; gap: 14px; border-top: 1px solid var(--line); padding-top: 18px; }
 .form-section-heading { display: flex; align-items: flex-start; gap: 11px; }
 .form-section-heading h3 { margin: 1px 0 4px; font-size: 15px; }

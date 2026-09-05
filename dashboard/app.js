@@ -1735,11 +1735,26 @@ $('#generate-form').addEventListener('submit', async event => {
     storyType: values.storyType,
     imageStyle: values.imageStyle
   };
+  const generationMode = event.currentTarget.dataset.generationMode || 'standard';
+  const campaignContext = generationMode === 'campaign' ? {
+    mode: 'campaign',
+    campaignId: values.campaignId || 'content-rewards-mw4'
+  } : { mode: 'standard' };
   try {
-    await mutate('/generate', 'POST', { ...values, topic: values.topic.trim() || null, strategyContext: { ...cartoonContext, ...narrativeContext } }, 'Generation job started.');
+    await mutate('/generate', 'POST', { ...values, topic: values.topic.trim() || null, strategyContext: { ...cartoonContext, ...narrativeContext, ...campaignContext } }, 'Generation job started.');
     $('#generate-dialog').close();
     event.currentTarget.reset();
   } catch (_error) { /* toast already shown */ }
+});
+
+document.querySelectorAll('[data-generation-mode]').forEach(button => {
+  button.addEventListener('click', () => {
+    const form = $('#generate-form');
+    const mode = button.dataset.generationMode;
+    form.dataset.generationMode = mode;
+    document.querySelectorAll('[data-generation-mode]').forEach(item => item.classList.toggle('selected', item === button));
+    $('#campaign-options').classList.toggle('hidden', mode !== 'campaign');
+  });
 });
 
 $('#idea-form').addEventListener('submit', async event => {
