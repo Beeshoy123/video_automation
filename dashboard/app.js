@@ -530,6 +530,7 @@ function populateSettings(profile = {}, settings = {}, providers = []) {
   $('#notifications-enabled').checked = settings.notification_enabled !== 'false';
   const videoMapping = {
     videoProvider: settings.video_provider || 'slideshow',
+    videoEngine: settings.video_engine || 'standard',
     videoGenerationMode: settings.video_generation_mode || 'hybrid',
     videoClipDuration: settings.video_clip_duration || '8',
     videoMaxGeneratedSeconds: settings.video_max_generated_seconds || '60'
@@ -548,17 +549,6 @@ function switchView(view) {
   ui.currentView = view;
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `${view}-view`));
-  const titles = {
-    overview: ['OPERATOR OVERVIEW', 'Know what happens next.'],
-    operator: ['AUTONOMOUS OPERATOR', 'Give Lumen the strategy.'],
-    pipeline: ['CONTENT OPERATIONS', 'From idea to published.'],
-    calendar: ['EDITORIAL PLANNING', 'Plan before you generate.'],
-    analytics: ['PERFORMANCE', 'Turn results into the next move.'],
-    readiness: ['PRODUCTION READINESS', 'Verify before autonomy runs.'],
-    settings: ['CHANNEL GUARDRAILS', 'Make every agent sound like you.']
-  };
-  $('#view-eyebrow').textContent = titles[view][0];
-  $('#view-title').textContent = titles[view][1];
   location.hash = view;
 }
 
@@ -758,9 +748,8 @@ async function openContent(productionId) {
             </section>` : ''}
           </div>
         </div>
-        ${renderSceneEditor(item, canReview)}
-        ${renderShortsStudio(item)}
-        ${renderProvenanceEditor(item.provenance, canReview)}
+        <section class="review-decision-panel">
+          <div class="panel-heading"><div><p class="eyebrow">NEXT DECISION</p><h3>Review and publish</h3><p>Confirm the packaging, rights, facts, and timing before scheduling.</p></div></div>
           <div class="form-grid two">
             <label><span>Publish time</span><input name="publishTime" type="datetime-local" value="${toLocalInput(publishTime)}"></label>
             <label><span>Privacy</span><select name="privacyStatus"><option value="private" ${data.privacyStatus === 'private' ? 'selected' : ''}>Private</option><option value="unlisted" ${data.privacyStatus === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="public" ${data.privacyStatus === 'public' ? 'selected' : ''}>Public</option></select></label>
@@ -770,6 +759,10 @@ async function openContent(productionId) {
             <label class="toggle"><input name="rightsConfirmed" type="checkbox" ${data.rightsConfirmed ? 'checked' : ''}><span></span> Media rights confirmed</label>
           </div>
           ${canReview ? `<div class="form-actions"><button type="button" class="button primary" data-approve-content="${escapeHTML(item.id)}">Approve & schedule</button><button type="button" class="button secondary" data-save-content="${escapeHTML(item.id)}">Save draft</button><button type="button" class="button danger" data-reject-content="${escapeHTML(item.id)}">Reject</button><button type="button" class="button ghost" data-retry-content="${escapeHTML(item.id)}">Regenerate</button></div>` : `<a class="button secondary" href="${escapeHTML(item.schedule?.youtube_url || '#')}" target="_blank" rel="noopener">Open on YouTube</a>`}
+        </section>
+        ${renderSceneEditor(item, canReview)}
+        ${renderShortsStudio(item)}
+        ${renderProvenanceEditor(item.provenance, canReview)}
       </form>`;
     $('#content-review-form').dataset.productionId = item.id;
     $('#content-dialog').showModal();
@@ -934,6 +927,18 @@ async function mutate(url, method, body, successMessage) {
 }
 
 document.addEventListener('click', async event => {
+  const template = event.target.closest('[data-template]');
+  if (template) {
+    const form = $('#generate-form');
+    const values = generationTemplates[template.dataset.template];
+    if (form && values) {
+      for (const [name, value] of Object.entries(values)) {
+        if (form.elements[name]) form.elements[name].value = value;
+      }
+      $('#generate-dialog').showModal();
+    }
+    return;
+  }
   const nav = event.target.closest('[data-view]');
   if (nav) return switchView(nav.dataset.view);
   const go = event.target.closest('[data-go]');
@@ -1217,6 +1222,26 @@ document.addEventListener('change', event => {
 });
 
 $('#generate-button').addEventListener('click', () => $('#generate-dialog').showModal());
+$('#overview-create-button').addEventListener('click', () => $('#generate-dialog').showModal());
+const generationTemplates = {
+  mystery: { topic: '', style: 'story', length: 'short', storyType: 'mystery', imageStyle: 'cinematic', character: '', visualStyle: 'moody cinematic narrative', sceneCount: '8', voiceDirection: 'Calm, tense storyteller' },
+  scary: { topic: '', style: 'story', length: 'short', storyType: 'scary', imageStyle: 'cinematic', character: '', visualStyle: 'dark atmospheric horror', sceneCount: '8', voiceDirection: 'Low, suspenseful narrator' },
+  facts: { topic: '', style: 'explainer', length: 'short', storyType: 'fun_facts', imageStyle: 'photorealistic', character: '', visualStyle: 'clean documentary visuals', sceneCount: '6', voiceDirection: 'Curious, energetic narrator' },
+  motivational: { topic: '', style: 'story', length: 'short', storyType: 'motivational', imageStyle: 'cinematic', character: '', visualStyle: 'warm cinematic realism', sceneCount: '8', voiceDirection: 'Warm, encouraging narrator' },
+  shorts: { topic: '', style: 'explainer', length: 'short', storyType: 'fun_facts', imageStyle: 'cinematic', character: '', visualStyle: 'bold vertical documentary', sceneCount: '6', voiceDirection: 'Fast, clear narrator' },
+  history: { topic: '', style: 'story', length: 'short', storyType: 'history', imageStyle: 'cinematic', character: '', visualStyle: 'period documentary realism', sceneCount: '8', voiceDirection: 'Measured documentary narrator' }
+};
+document.querySelectorAll('[data-template]').forEach(button => {
+  button.addEventListener('click', () => {
+    const form = $('#generate-form');
+    const values = generationTemplates[button.dataset.template];
+    if (!form || !values) return;
+    for (const [name, value] of Object.entries(values)) {
+      if (form.elements[name]) form.elements[name].value = value;
+    }
+    $('#generate-dialog').showModal();
+  });
+});
 $('#add-idea-button').addEventListener('click', () => $('#idea-dialog').showModal());
 $('#refresh-button').addEventListener('click', () => refreshDashboard());
 $('#pipeline-filter').addEventListener('change', () => renderPipeline(ui.state?.pipeline || []));
@@ -1292,8 +1317,12 @@ $('#generate-form').addEventListener('submit', async event => {
     sceneCount: values.sceneCount,
     voiceDirection: values.voiceDirection
   } : {};
+  const narrativeContext = {
+    storyType: values.storyType,
+    imageStyle: values.imageStyle
+  };
   try {
-    await mutate('/generate', 'POST', { ...values, topic: values.topic.trim() || null, strategyContext: cartoonContext }, 'Generation job started.');
+    await mutate('/generate', 'POST', { ...values, topic: values.topic.trim() || null, strategyContext: { ...cartoonContext, ...narrativeContext } }, 'Generation job started.');
     $('#generate-dialog').close();
     event.currentTarget.reset();
   } catch (_error) { /* toast already shown */ }
@@ -1320,6 +1349,7 @@ $('#profile-form').addEventListener('submit', async event => {
       notification_enabled: $('#notifications-enabled').checked,
       channel_timezone: values.timezone,
       video_provider: values.videoProvider,
+      video_engine: values.videoEngine,
       video_generation_mode: values.videoGenerationMode,
       video_clip_duration: Number(values.videoClipDuration),
       video_max_generated_seconds: Number(values.videoMaxGeneratedSeconds)

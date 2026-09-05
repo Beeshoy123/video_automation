@@ -524,6 +524,7 @@ class Database {
       ['max_daily_posts', '1', 'Maximum posts per day'],
       ['content_buffer_days', '3', 'Days of content to keep in buffer'],
       ['video_provider', 'slideshow', 'Video provider: slideshow, auto, seedance, minimax_h3, google_omni, kling, or wan'],
+      ['video_engine', 'standard', 'Production engine: standard, faceless_stock, or narrative_story'],
       ['video_provider_order', 'seedance,minimax_h3,google_omni,kling,wan,slideshow', 'Provider priority used by automatic routing'],
       ['video_generation_mode', 'hybrid', 'Use provider clips within a locally assembled long-form video'],
       ['video_clip_duration', '8', 'Requested duration for each generated provider clip'],

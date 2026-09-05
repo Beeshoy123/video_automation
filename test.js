@@ -39,6 +39,8 @@ class SystemTest {
       { name: 'AI Text Service Token Compatibility', test: () => this.testAITextServiceTokenParams() },
       { name: 'Placeholder Scheduling Guard', test: () => this.testPlaceholderSchedulingGuard() },
       { name: 'FFmpeg Resolution', test: () => this.testFFmpegResolution() },
+      { name: 'Faceless Stock Engine Contract', test: () => this.testFacelessStockEngine() },
+      { name: 'Narrative Story Engine Contract', test: () => this.testNarrativeStoryEngine() },
       { name: 'Gemini Media Provider Selection', test: () => this.testGeminiMediaProvider() },
       { name: 'Slideshow Renderer', test: () => this.testSlideshowRenderer() },
       { name: 'Evergreen Template Topics', test: () => this.testEvergreenTopics() },
@@ -2230,6 +2232,60 @@ class SystemTest {
     }
 
     this.logger.info('Walkthrough module test completed successfully');
+  }
+
+  async testFacelessStockEngine() {
+    const { FacelessStockEngine } = require('./utils/faceless-stock-engine');
+    const engine = new FacelessStockEngine({}, {
+      pexelsKey: 'test-key',
+      text: {
+        generateText: async () => JSON.stringify([
+          { text: 'The hook begins here.', visual_1: 'science laboratory', visual_2: 'close up experiment' },
+          { text: 'The context explains why it matters.', visual_1: 'city skyline', visual_2: 'people observing' },
+          { text: 'The mechanism reveals the hidden cause.', visual_1: 'machine gears', visual_2: 'data graph' },
+          { text: 'The twist changes the conclusion.', visual_1: 'storm clouds', visual_2: 'sunrise landscape' }
+        ])
+      },
+      tts: { generateTTSAudio: async () => 'unused' }
+    });
+    const scenes = await engine.planScenes('Test topic', {});
+    if (scenes.length !== 4 || scenes[0].visual_1 !== 'science laboratory') {
+      throw new Error('Faceless scene planner returned an invalid scene contract');
+    }
+    const captions = engine.buildCaptions([
+      { text: 'First caption', startSeconds: 0, duration: 2.5 },
+      { text: 'Second caption', startSeconds: 2.5, duration: 3 }
+    ]);
+    if (!captions.includes('00:00:00,000 --> 00:00:02,500') || !captions.includes('Second caption')) {
+      throw new Error('Faceless caption timing is invalid');
+    }
+    this.logger.info('Faceless stock engine contract test completed successfully');
+  }
+
+  async testNarrativeStoryEngine() {
+    const { NarrativeStoryEngine, STORY_TYPES, IMAGE_STYLES } = require('./utils/narrative-story-engine');
+    const engine = new NarrativeStoryEngine({}, {
+      text: {
+        generateText: async prompt => prompt.includes('character objects')
+          ? JSON.stringify([{ name: 'Mara', age: 'adult', appearance: 'short dark hair and round glasses', consistent_traits: 'curious and observant' }])
+          : JSON.stringify([
+            { description: 'Mara discovers a locked door in an empty station.', subtitles: 'The station had been empty for years, but one door was still warm.', transition_type: 'zoom-in' },
+            { description: 'Mara examines a strange symbol beside the lock.', subtitles: 'The symbol matched a mark from her grandfather journal.', transition_type: 'cut' },
+            { description: 'The door opens into a room filled with clocks.', subtitles: 'Every clock showed the exact time she had arrived.', transition_type: 'zoom-out' },
+            { description: 'Mara chooses to close the door and leave.', subtitles: 'Some mysteries are warnings, not invitations.', transition_type: 'cut' }
+          ])
+      },
+      tts: { generateTTSAudio: async () => 'unused' },
+      visual: { generateVisualAssets: async () => [] }
+    });
+    const characters = await engine.buildCharacterBible('The locked station', { title: 'The Door' }, 'mystery');
+    const storyboard = await engine.buildStoryboard('The locked station', { title: 'The Door' }, 'mystery', characters);
+    if (!STORY_TYPES.mystery || !IMAGE_STYLES.includes('cinematic') || characters[0].name !== 'Mara' || storyboard.length !== 4) {
+      throw new Error('Narrative story engine contract is incomplete');
+    }
+    const captions = engine.buildCaptions([{ subtitles: 'The beginning', startSeconds: 0, duration: 2 }]);
+    if (!captions.includes('00:00:00,000 --> 00:00:02,000')) throw new Error('Narrative caption timing is invalid');
+    this.logger.info('Narrative story engine contract test completed successfully');
   }
 
   async testLogger() {

@@ -79,6 +79,26 @@ Choose a blurred-canvas, center-crop, or stacked-focus layout, then render a rea
 
 Every Short has its own approval and schedule. Scheduling remains blocked until the source production is approved, provenance is resolved, uploaded media rights are confirmed, every source scene is current, and the operator explicitly confirms the Short's privacy and publish time. Published Shorts retain their parent-production identity while their analytics use a separate Shorts baseline.
 
+### Generate a faceless stock Short from scratch
+
+The optional **Faceless stock Shorts** production engine creates an independent 9:16 Short using Gemini scene planning, two literal Pexels searches per scene, configured narration, and local FFmpeg assembly. It keeps the normal review, provenance, rights, approval, and publishing gates. Existing video generation remains the default.
+
+Configure `PEXELS_API_KEY` in the environment or add a `pexels.apiKey` value to `config/credentials.json`, then select **Faceless stock Shorts** under **Settings > Production engine**. The equivalent API request is:
+
+```bash
+curl -X PUT http://localhost:3456/api/settings \
+  -H "Content-Type: application/json" \
+  -d '{"video_engine":"faceless_stock"}'
+```
+
+The engine stores its intermediate assets under `data/faceless/<production-id>/` and returns a real vertical MP4 plus SRT captions. It uses the app's configured TTS provider; Edge-TTS is not required.
+
+### Generate narrative story videos
+
+Select **Narrative story videos** as the production engine to create image-led stories. The Create video dialog provides story types such as mystery, scary, bedtime, history, motivational, fun facts, and philosophy, plus cinematic, photorealistic, anime, comic-book, and Pixar-style image directions.
+
+This engine creates a character continuity bible, expands the script into a storyboard, generates one image and narration track per scene, and assembles a vertical MP4 with SRT captions. It requires a real configured image provider and TTS provider; simulated image or audio assets are blocked from becoming publishable videos.
+
 ### Review research and provenance
 
 Every production has an **Evidence desk** inside Review Studio. Autonomous research carries exact YouTube source metadata into the production, while AI-generated scripts list the factual claims that need review. Add any official articles, datasets, asset licenses, or other evidence that the script needs, verify each source, and connect it to the claims it supports.

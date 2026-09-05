@@ -15,13 +15,21 @@
         <span><strong id="brand-name">Automation Studio</strong><small>YouTube operator console</small></span>
       </a>
       <nav aria-label="Main navigation">
-        <button class="nav-item active" data-view="overview"><span>⌂</span> Overview</button>
-        <button class="nav-item" data-view="operator"><span>◎</span> Autonomous operator</button>
-        <button class="nav-item" data-view="pipeline"><span>≋</span> Pipeline <b id="review-badge" class="badge hidden">0</b></button>
-        <button class="nav-item" data-view="calendar"><span>□</span> Calendar & ideas</button>
-        <button class="nav-item" data-view="analytics"><span>⌁</span> Analytics</button>
-        <button class="nav-item" data-view="readiness"><span>✓</span> Production readiness</button>
-        <button class="nav-item" data-view="settings"><span>⚙</span> Channel setup</button>
+        <div class="nav-group nav-all-items">
+          <button class="nav-item active" data-view="overview"><span>⌂</span> Overview</button>
+          <button class="nav-item" data-view="pipeline"><span>≋</span> Pipeline <b id="review-badge" class="badge hidden">0</b></button>
+          <button class="nav-item" data-view="calendar"><span>□</span> Calendar & ideas</button>
+          <button class="nav-item" data-view="operator"><span>◎</span> Autonomous operator</button>
+          <button class="nav-item" data-view="readiness"><span>✓</span> Production readiness</button>
+          <button class="nav-item" data-view="analytics"><span>⌁</span> Analytics</button>
+          <button class="nav-item" data-view="settings"><span>⚙</span> Channel setup</button>
+          
+        
+        </div>
+        <div class="nav-command-actions top-actions">
+          <button id="refresh-button" class="icon-button" title="Refresh dashboard" aria-label="Refresh dashboard">↻</button>
+          <button id="generate-button" class="button primary">＋ Create video</button>
+        </div>
       </nav>
       <div class="sidebar-footer">
         <div class="system-pill"><i id="system-dot"></i><span id="system-label">Connecting…</span></div>
@@ -30,22 +38,53 @@
     </aside>
 
     <main>
-      <header class="topbar">
-        <div>
-          <p class="eyebrow" id="view-eyebrow">OPERATOR OVERVIEW</p>
-          <h1 id="view-title">Know what happens next.</h1>
-        </div>
-        <div class="top-actions">
-          <button id="refresh-button" class="icon-button" title="Refresh dashboard" aria-label="Refresh dashboard">↻</button>
-          <button id="generate-button" class="button primary">＋ Create video</button>
-        </div>
-      </header>
-
       <div id="loading" class="loading-bar"></div>
       <div id="toast" class="toast hidden" role="status"></div>
 
       <section id="overview-view" class="view active">
+        <header class="studio-hero" aria-labelledby="studio-hero-title">
+          <div class="studio-hero-copy"><p class="eyebrow">YOUTUBE AUTOMATION STUDIO</p><h1 id="studio-hero-title">Build. Review. Publish.</h1><p>Create faceless videos and Shorts with AI, while keeping every scene, source, approval, and publishing decision in view.</p></div>
+          <div class="studio-capabilities" aria-label="Studio capabilities">
+            <span><i>✦</i> Narrative stories</span>
+            <span><i>▣</i> Faceless stock</span>
+            <span><i>↗</i> Shorts repurposing</span>
+            <span><i>✓</i> Review gates</span>
+          </div>
+        </header>
         <div id="setup-banner" class="setup-banner hidden"><div><strong>Finish setup to activate your agents</strong><p>The operator console is ready, but generation and publishing stay disabled until credentials are configured.</p></div><code>npm run walkthrough</code></div>
+        <section class="overview-launcher" aria-labelledby="launcher-title">
+          <div class="launcher-heading">
+            <div><p class="eyebrow">START HERE</p><h2 id="launcher-title">What are you making today?</h2><p>Choose a workflow. Your existing review, safety, and publishing controls remain in place.</p></div>
+          </div>
+          <div class="launcher-grid">
+            <article class="launcher-card launcher-create">
+              <div class="launcher-preview"><div class="launcher-icon">✦</div><span class="engine-badge">Narrative · AI</span></div>
+              <div class="launcher-copy"><h3>Create from an idea</h3><p>Build a new explainer, narrative story, faceless Short, or AI-generated video.</p><span>Script · visuals · voice · review</span><strong class="launcher-next">Next: define your brief</strong></div>
+              <button id="overview-create-button" class="button primary">Start creating <span aria-hidden="true">→</span></button>
+            </article>
+            <article class="launcher-card launcher-shorts">
+              <div class="launcher-preview"><div class="launcher-icon">▣</div><span class="engine-badge">Repurposing · Local</span></div>
+              <div class="launcher-copy"><h3>Turn a video into Shorts</h3><p>Reuse an approved production, select scenes, add captions, and render vertical clips.</p><span>Clips · layouts · captions · schedule</span><strong class="launcher-next">Next: choose a production</strong></div>
+              <button class="button secondary" data-view="pipeline">Create Shorts <span aria-hidden="true">→</span></button>
+            </article>
+            <article class="launcher-card launcher-workspace">
+              <div class="launcher-preview"><div class="launcher-icon">◈</div><span class="engine-badge">Workspace · All engines</span></div>
+              <div class="launcher-copy"><h3>Continue working</h3><p>Return to drafts, failed jobs, review decisions, scene repair, or scheduled content.</p><span>Pipeline · review · recovery · publishing</span><strong class="launcher-next">Next: pick up where you left off</strong></div>
+              <button class="button secondary" data-view="pipeline">Open workspace <span aria-hidden="true">→</span></button>
+            </article>
+          </div>
+        </section>
+        <section class="template-rail" aria-labelledby="template-rail-title">
+          <div class="rail-heading"><div><p class="eyebrow">QUICK STARTS</p><h2 id="template-rail-title">Start with a template</h2><p>Prefill a proven format, then adjust every detail before generation.</p></div><span class="rail-note">Editable presets</span></div>
+          <div class="template-track">
+            <button type="button" class="template-card" data-template="mystery"><span class="template-icon">◌</span><strong>Mystery story</strong><small>Narrative · cinematic</small></button>
+            <button type="button" class="template-card" data-template="scary"><span class="template-icon">◈</span><strong>Scary story</strong><small>Suspense · dark visuals</small></button>
+            <button type="button" class="template-card" data-template="facts"><span class="template-icon">✦</span><strong>Fun facts</strong><small>Explainer · stock or images</small></button>
+            <button type="button" class="template-card" data-template="motivational"><span class="template-icon">↗</span><strong>Motivational</strong><small>Story · cinematic</small></button>
+            <button type="button" class="template-card" data-template="shorts"><span class="template-icon">▣</span><strong>Quick Short</strong><small>Faceless stock · vertical</small></button>
+            <button type="button" class="template-card" data-template="history"><span class="template-icon">⌁</span><strong>Interesting history</strong><small>Research-first narrative</small></button>
+          </div>
+        </section>
         <div class="stats-grid">
           <article class="stat"><span>Needs review</span><strong id="stat-review">—</strong><small>waiting for a decision</small></article>
           <article class="stat"><span>Scheduled</span><strong id="stat-scheduled">—</strong><small>next 30 days</small></article>
@@ -181,7 +220,6 @@
       </section>
 
       <section id="settings-view" class="view">
-        <div class="section-intro"><div><h2>Channel setup</h2><p>These guardrails guide every agent in the pipeline.</p></div></div>
         <form id="profile-form" class="panel settings-form">
           <div class="form-grid">
             <label><span>Channel name</span><input name="channelName" maxlength="120" required></label>
@@ -200,6 +238,7 @@
           </div>
           <div class="form-grid video-provider-settings">
             <label><span>Video provider</span><select name="videoProvider"><option value="slideshow">Local slideshow · no provider cost</option><option value="auto">Automatic capability routing</option><option value="seedance">ByteDance Seedance 2.5</option><option value="minimax_h3">MiniMax H3</option><option value="google_omni">Google Gemini Omni Flash</option><option value="kling">Kuaishou Kling 3.0 Omni</option><option value="wan">Alibaba Wan 2.7</option></select><small id="video-provider-status">Provider credentials are checked at runtime.</small></label>
+            <label><span>Production engine</span><select name="videoEngine"><option value="standard">Standard AI production</option><option value="faceless_stock">Faceless stock Shorts</option><option value="narrative_story">Narrative story videos</option></select><small>Choose stock footage for explainers or AI images for consistent narrative story scenes.</small></label>
             <label><span>Generation mode</span><select name="videoGenerationMode"><option value="hybrid">Hybrid · generated clips + local assembly</option><option value="slideshow">Local slideshow only</option></select></label>
             <label><span>Clip duration</span><input name="videoClipDuration" type="number" min="3" max="30" step="1"></label>
             <label><span>Paid seconds cap</span><input name="videoMaxGeneratedSeconds" type="number" min="0" max="600" step="1"><small>Maximum provider-generated seconds per production.</small></label>
@@ -213,17 +252,30 @@
   <dialog id="generate-dialog" class="dialog">
     <form id="generate-form" method="dialog">
       <div class="dialog-heading"><div><p class="eyebrow">NEW GENERATION JOB</p><h2>Create a video</h2></div><button type="button" class="close-button" data-close>×</button></div>
-      <label><span>Topic <small>optional—leave blank for agent selection</small></span><input name="topic" maxlength="200" placeholder="How small teams can automate repetitive work"></label>
-      <div class="form-grid two">
-        <label><span>Format</span><select name="style"><option value="explainer">Explainer</option><option value="tutorial">Tutorial</option><option value="list">List</option><option value="review">Review</option><option value="story">Story</option><option value="cartoon">Original cartoon</option></select></label>
-        <label><span>Length</span><select name="length"><option value="short">Short · 2–4 min</option><option value="medium" selected>Medium · 8–12 min</option><option value="long">Long · 15–20 min</option></select></label>
-      </div>
-      <div class="form-grid two">
-        <label><span>Main character <small>optional</small></span><input name="character" maxlength="300" placeholder="A curious blue fox who explains things"></label>
-        <label><span>Cartoon visual style</span><input name="visualStyle" maxlength="200" value="original handcrafted 3D cartoon"></label>
-        <label><span>Storyboard scenes</span><select name="sceneCount"><option value="6">6 scenes</option><option value="8" selected>8 scenes</option><option value="10">10 scenes</option></select></label>
-        <label><span>Voice direction</span><input name="voiceDirection" maxlength="300" placeholder="Warm, friendly narrator"></label>
-      </div>
+      <section class="form-section" aria-labelledby="brief-heading">
+        <div class="form-section-heading"><span class="step-number">1</span><div><h3 id="brief-heading">Brief</h3><p>Start with the subject and the kind of video you want.</p></div></div>
+        <label><span>Topic <small>optional—leave blank for agent selection</small></span><input name="topic" maxlength="200" placeholder="How small teams can automate repetitive work"></label>
+        <div class="form-grid two">
+          <label><span>Format</span><select name="style"><option value="explainer">Explainer</option><option value="tutorial">Tutorial</option><option value="list">List</option><option value="review">Review</option><option value="story">Story</option><option value="cartoon">Original cartoon</option></select></label>
+          <label><span>Length</span><select name="length"><option value="short">Short · 2–4 min</option><option value="medium" selected>Medium · 8–12 min</option><option value="long">Long · 15–20 min</option></select></label>
+        </div>
+      </section>
+      <section class="form-section" aria-labelledby="story-heading">
+        <div class="form-section-heading"><span class="step-number">2</span><div><h3 id="story-heading">Story and visuals</h3><p>These controls shape narrative continuity and the visual direction.</p></div></div>
+        <div class="form-grid two">
+          <label><span>Story type</span><select name="storyType"><option value="general">General narrative</option><option value="scary">Scary</option><option value="mystery">Mystery</option><option value="bedtime">Bedtime</option><option value="history">Interesting history</option><option value="urban_legends">Urban legend</option><option value="motivational">Motivational</option><option value="fun_facts">Fun facts</option><option value="philosophy">Philosophy</option></select></label>
+          <label><span>Image style</span><select name="imageStyle"><option value="cinematic">Cinematic</option><option value="photorealistic">Photorealistic</option><option value="anime">Anime</option><option value="comic-book">Comic book</option><option value="pixar-art">Pixar-style</option></select></label>
+          <label><span>Main character <small>optional</small></span><input name="character" maxlength="300" placeholder="A curious blue fox who explains things"></label>
+          <label><span>Cartoon visual style</span><input name="visualStyle" maxlength="200" value="original handcrafted 3D cartoon"></label>
+        </div>
+      </section>
+      <section class="form-section" aria-labelledby="generation-heading">
+        <div class="form-section-heading"><span class="step-number">3</span><div><h3 id="generation-heading">Generation details</h3><p>Set the scene count and narrator direction before starting.</p></div></div>
+        <div class="form-grid two">
+          <label><span>Storyboard scenes</span><select name="sceneCount"><option value="6">6 scenes</option><option value="8" selected>8 scenes</option><option value="10">10 scenes</option></select></label>
+          <label><span>Voice direction</span><input name="voiceDirection" maxlength="300" placeholder="Warm, friendly narrator"></label>
+        </div>
+      </section>
       <p class="callout">Generation runs in the background. You can follow each stage and cancel between stages.</p>
       <div class="form-actions"><button type="submit" class="button primary">Start generation</button><button type="button" class="button ghost" data-close>Cancel</button></div>
     </form>

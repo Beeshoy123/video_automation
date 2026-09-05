@@ -270,7 +270,7 @@ class YouTubeAutomationAgent {
       if (typeof body.strategyContext !== 'object' || Array.isArray(body.strategyContext)) {
         return { valid: false, status: 400, error: 'strategyContext must be an object' };
       }
-      const limits = { angle: 500, rationale: 1000, audience: 500, objective: 1000, valueProposition: 1000, constraints: 2000, character: 300, visualStyle: 200, sceneCount: 2, voiceDirection: 300 };
+      const limits = { angle: 500, rationale: 1000, audience: 500, objective: 1000, valueProposition: 1000, constraints: 2000, character: 300, visualStyle: 200, sceneCount: 2, voiceDirection: 300, storyType: 40, imageStyle: 40 };
       value.strategyContext = {};
       for (const [key, max] of Object.entries(limits)) {
         if (body.strategyContext[key] === undefined || body.strategyContext[key] === null) continue;
@@ -982,6 +982,11 @@ class YouTubeAutomationAgent {
         if (!supported.includes(provider)) return res.status(400).json({ error: 'Unsupported video provider' });
         await this.db.setSetting('video_provider', provider);
       }
+      const engine = req.body?.video_engine;
+      if (engine !== undefined) {
+        if (!['standard', 'faceless_stock', 'narrative_story'].includes(engine)) return res.status(400).json({ error: 'Unsupported video engine' });
+        await this.db.setSetting('video_engine', engine);
+      }
       const mode = req.body?.video_generation_mode;
       if (mode !== undefined) {
         if (!['hybrid', 'slideshow'].includes(mode)) return res.status(400).json({ error: 'Unsupported video generation mode' });
@@ -1207,6 +1212,8 @@ class YouTubeAutomationAgent {
       generated.channelValueProposition = strategyContext.valueProposition || null;
       generated.channelConstraints = strategyContext.constraints || null;
       generated.callToAction = profile.call_to_action || null;
+      generated.storyType = strategyContext.storyType || null;
+      generated.imageStyle = strategyContext.imageStyle || null;
       generated.researchSources = Array.isArray(strategyContext.researchSources)
         ? strategyContext.researchSources
         : [];
