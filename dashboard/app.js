@@ -141,6 +141,7 @@ function renderDashboard() {
   renderSchedule(state.schedule.slice(0, 5), '#next-schedule');
   renderNotifications(state.notifications, state.events);
   renderPipeline(state.pipeline);
+  renderCampaignIntake(state.campaignIntake);
   renderCalendar(state.schedule);
   renderIdeas(state.ideas);
   renderAnalytics(state.analytics, state.learning);
@@ -148,6 +149,28 @@ function renderDashboard() {
   renderReadiness(state.readiness);
   renderOperator(state.channelStrategy, state.operatorRuns || [], { ...state.system, readiness: state.readiness });
   populateSettings(state.profile, state.settings, state.system.videoProviders || []);
+}
+
+function activeCampaign() {
+  return (ui.state?.campaignCatalog?.campaigns || []).find(campaign => campaign.id === ui.state?.campaignCatalog?.activeCampaignId) || ui.state?.campaignIntake?.campaign || {};
+}
+
+function renderCampaignIntake(intake = {}) {
+  const assets = Array.isArray(intake.assets) ? intake.assets : [];
+  const status = $('#campaign-intake-status');
+  const count = $('#campaign-asset-count');
+  const list = $('#campaign-asset-list');
+  if (!status || !count || !list) return;
+  const campaign = activeCampaign();
+  $('#active-campaign-name').textContent = campaign.name || 'New campaign';
+  $('#campaign-approved-folder').value = campaign.approvedFolder || '';
+  $('#active-campaign-folder').textContent = campaign.approvedFolder ? `Approved folder: ${campaign.approvedFolder}` : '';
+  const selector = $('#active-campaign-select');
+  selector.innerHTML = (ui.state?.campaignCatalog?.campaigns || []).map(item => `<option value="${escapeHTML(item.id)}" ${item.id === ui.state?.campaignCatalog?.activeCampaignId ? 'selected' : ''}>${escapeHTML(item.name)}</option>`).join('');
+  status.textContent = assets.length ? `${assets.length} approved file${assets.length === 1 ? '' : 's'}` : 'No footage';
+  status.className = `status ${assets.length ? 'success' : 'warning'}`;
+  count.textContent = `${assets.length} file${assets.length === 1 ? '' : 's'}`;
+  list.innerHTML = assets.length ? assets.slice().reverse().map(asset => `<article class="campaign-asset"><div><strong>${escapeHTML(asset.filename)}</strong><span>${escapeHTML(asset.mimeType)} · ${(Number(asset.sizeBytes || 0) / 1024 / 1024).toFixed(1)} MB</span></div><div><span class="status success">Approved source</span><small>SHA-256 ${escapeHTML(asset.sha256.slice(0, 16))}… · ${formatDate(asset.provenance?.capturedAt)}</small><button type="button" class="button secondary small" data-analyze-campaign-asset="${escapeHTML(asset.id)}">Analyze highlights</button></div></article>`).join('') : empty('Upload the first approved MediaSilo file to begin clip selection.');
 }
 
 function renderLiveStageBar(jobs = [], pipeline = []) {
@@ -645,7 +668,7 @@ function populateSettings(profile = {}, settings = {}, providers = []) {
 
 function switchView(view) {
   ui.currentView = view;
-  const titles = { overview: 'Overview', pipeline: 'Content pipeline', calendar: 'Calendar & ideas', operator: 'Niche & ideas', readiness: 'Pipeline health', analytics: 'Analytics', settings: 'Channel setup' };
+  const titles = { overview: 'Overview', pipeline: 'Content pipeline', campaign: 'Campaign Clip Builder', calendar: 'Calendar & ideas', operator: 'Niche & ideas', readiness: 'Pipeline health', analytics: 'Analytics', settings: 'Channel setup' };
   const workspaceTitle = $('#workspace-view-title');
   if (workspaceTitle) workspaceTitle.textContent = view === 'overview' ? ui.overviewStatus : titles[view] || 'Overview';
   if (ui.state) renderLiveStageBar(ui.state.jobs || [], ui.state.pipeline || []);
@@ -1520,9 +1543,9 @@ document.addEventListener('click', async event => {
 
   const reject = event.target.closest('[data-reject-content]');
   if (reject) {
-    const notes = prompt('Why are you rejecting this content?', 'Needs a different angle');
+    const notes = prompt('Reject and permanently delete this video and generated assets? Enter a reason:', 'Needs a different angle');
     if (notes !== null) {
-      await mutate(`/api/content/${encodeURIComponent(reject.dataset.rejectContent)}/reject`, 'POST', { notes }, 'Content rejected.').catch(() => {});
+      await mutate(`/api/content/${encodeURIComponent(reject.dataset.rejectContent)}/reject`, 'POST', { notes }, 'Content rejected and generated video deleted.').catch(() => {});
       $('#content-dialog').close();
     }
   }
@@ -1649,6 +1672,153 @@ $('#add-idea-button').addEventListener('click', () => $('#idea-dialog').showModa
 $('#refresh-button')?.addEventListener('click', () => refreshDashboard());
 $('#pipeline-filter').addEventListener('change', () => renderPipeline(ui.state?.pipeline || []));
 
+$('#campaign-upload-form')?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const file = $('#campaign-source-file').files[0];
+  if (!file) return;
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  button.disabled = true;
+  button.textContent = 'Recording provenance…';
+  try {
+    const campaign = activeCampaign();
+    const response = await fetch(`/api/campaigns/${encodeURIComponent(campaign.id)}/source-assets`, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type || 'application/octet-stream', 'x-file-name': file.name, 'x-source-folder': campaign.approvedFolder, ...(apiKey() ? { 'x-api-key': apiKey() } : {}) },
+      body: file
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Upload failed');
+    showToast('Approved source footage added with provenance.');
+    event.currentTarget.reset();
+    await refreshDashboard(true);
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Add approved footage';
+  }
+});
+
+$('#active-campaign-select')?.addEventListener('change', async event => {
+  await mutate('/api/campaigns/active', 'PUT', { campaignId: event.currentTarget.value }, 'Active campaign changed.').catch(() => {});
+});
+
+$('#campaign-logo-form')?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const file = $('#campaign-logo-file').files[0];
+  if (!file) return;
+  try {
+    const response = await fetch(`/api/campaigns/${encodeURIComponent(activeCampaign().id)}/logo`, { method: 'PUT', headers: { 'Content-Type': file.type, 'x-file-name': file.name, ...(apiKey() ? { 'x-api-key': apiKey() } : {}) }, body: file });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Logo upload failed');
+    showToast('Official campaign logo saved.');
+    event.currentTarget.reset();
+    await refreshDashboard(true);
+  } catch (error) { showToast(error.message, 'error'); }
+});
+
+$('#new-campaign-button')?.addEventListener('click', async () => {
+  const name = prompt('Campaign name');
+  if (!name?.trim()) return;
+  const phrases = prompt('Required phrases, separated by commas (optional)', '') || '';
+  await mutate('/api/campaigns', 'POST', {
+    name: name.trim(),
+    requiredPhrases: phrases.split(',').map(value => value.trim()).filter(Boolean)
+  }, 'Campaign created and selected.').catch(() => {});
+});
+
+$('#campaign-caption-form')?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const campaign = activeCampaign();
+  try {
+    const result = await mutate(`/api/campaigns/${encodeURIComponent(campaign.id)}/caption`, 'POST', {
+      body: $('#campaign-caption-body').value,
+      disclosure: $('#campaign-caption-disclosure').value,
+      hashtags: $('#campaign-caption-hashtags').value
+    }, 'Compliant caption generated.');
+    $('#campaign-caption-preview').textContent = result.result.text;
+    $('#campaign-caption-status').textContent = `${result.result.validation.hashtagCount} hashtags · valid`;
+    $('#campaign-caption-status').className = 'status success';
+  } catch (error) {
+    $('#campaign-caption-status').textContent = 'Caption needs fixes';
+    $('#campaign-caption-status').className = 'status warning';
+  }
+});
+
+$('#campaign-asset-list')?.addEventListener('click', async event => {
+  const button = event.target.closest('[data-analyze-campaign-asset]');
+  if (!button) return;
+  button.disabled = true;
+  button.textContent = 'Analyzing…';
+  try {
+    const result = await mutate(`/api/campaigns/${encodeURIComponent(activeCampaign().id)}/source-assets/${encodeURIComponent(button.dataset.analyzeCampaignAsset)}/analyze`, 'POST', {}, 'Highlight analysis completed.');
+    const proposals = result.result?.proposals || [];
+    const proposalText = proposals.map(proposal => `${proposal.startSeconds}s · ${proposal.duration}s · ${proposal.rationale}`).join('\n') || 'No eligible 10–30 second windows found.';
+    showToast(proposalText, proposals.length ? 'success' : 'error');
+    if (proposals.length) {
+      const card = button.closest('.campaign-asset');
+      card.insertAdjacentHTML('beforeend', `<div class="campaign-proposals">${proposals.slice(0, 5).map(proposal => `<button type="button" class="button primary small" data-render-campaign-clip="${escapeHTML(button.dataset.analyzeCampaignAsset)}" data-start="${proposal.startSeconds}" data-duration="${proposal.duration}">Render ${proposal.duration}s clip</button>`).join('')}</div>`);
+    }
+  } catch (_error) { /* toast already shown */ }
+  finally { button.disabled = false; button.textContent = 'Analyze highlights'; }
+});
+
+$('#campaign-asset-list')?.addEventListener('click', async event => {
+  const button = event.target.closest('[data-render-campaign-clip]');
+  if (!button) return;
+  const captionText = prompt('Caption text for the clip', 'Highlight moment');
+  if (captionText === null) return;
+  try {
+    const result = await mutate(`/api/campaigns/${encodeURIComponent(activeCampaign().id)}/clips/render`, 'POST', { assetId: button.dataset.renderCampaignClip, startSeconds: Number(button.dataset.start), duration: Number(button.dataset.duration), captionText }, 'Campaign clip rendered.');
+    const outputPath = result.result?.outputPath;
+    if (outputPath) {
+      const compliance = $('#campaign-compliance-panel');
+      compliance.dataset.outputPath = outputPath;
+      compliance.classList.remove('hidden');
+      await reviewCampaignCompliance(outputPath);
+    }
+  } catch (_error) { /* toast already shown */ }
+});
+
+async function reviewCampaignCompliance(outputPath) {
+  const status = $('#campaign-compliance-status');
+  const checks = $('#campaign-compliance-checks');
+  const exportButton = $('#campaign-export-button');
+  try {
+    const response = await api(`/api/campaigns/${encodeURIComponent(activeCampaign().id)}/compliance`, { method: 'POST', body: JSON.stringify({ outputPath }) });
+    const report = response.report;
+    checks.innerHTML = report.checks.map(check => `<div class="campaign-compliance-check ${check.passed ? 'passed' : 'failed'}"><span>${check.passed ? '✓' : '×'}</span><strong>${escapeHTML(check.label)}</strong><small>${check.passed ? 'Passed' : 'Failed'}</small></div>`).join('');
+    status.textContent = report.passed ? 'All checks passed' : 'Export blocked';
+    status.className = `status ${report.passed ? 'success' : 'warning'}`;
+    exportButton.dataset.outputPath = outputPath;
+    exportButton.classList.toggle('hidden', !report.passed);
+  } catch (error) {
+    status.textContent = 'Review failed';
+    status.className = 'status warning';
+    checks.innerHTML = `<div class="empty">${escapeHTML(error.message)}</div>`;
+    exportButton.classList.add('hidden');
+  }
+}
+
+$('#campaign-export-button')?.addEventListener('click', async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = 'Exporting…';
+  try {
+    const result = await mutate(`/api/campaigns/${encodeURIComponent(activeCampaign().id)}/exports`, 'POST', { outputPath: button.dataset.outputPath }, 'Compliance passed and export package created.');
+    const packageId = result.result?.packageId;
+    const files = result.result?.files || {};
+    const fileLinks = Object.entries(files).map(([label, filePath]) => {
+      const fileName = filePath.split(/[\\/]/).pop();
+      return `<a class="campaign-export-file" href="/api/campaigns/${encodeURIComponent(activeCampaign().id)}/exports/${encodeURIComponent(packageId)}/${encodeURIComponent(fileName)}" target="_blank" rel="noopener">${escapeHTML(label.replaceAll('-', ' '))}<span>Download</span></a>`;
+    }).join('');
+    $('#campaign-export-files').innerHTML = fileLinks;
+    $('#campaign-export-files').classList.remove('hidden');
+    showToast('Export package ready.');
+  } catch (_error) { /* toast already shown */ }
+  finally { button.disabled = false; button.textContent = 'Export package'; }
+});
+
 $('#run-readiness-button').addEventListener('click', async event => {
   const button = event.currentTarget;
   button.disabled = true;
@@ -1735,26 +1905,11 @@ $('#generate-form').addEventListener('submit', async event => {
     storyType: values.storyType,
     imageStyle: values.imageStyle
   };
-  const generationMode = event.currentTarget.dataset.generationMode || 'standard';
-  const campaignContext = generationMode === 'campaign' ? {
-    mode: 'campaign',
-    campaignId: values.campaignId || 'content-rewards-mw4'
-  } : { mode: 'standard' };
   try {
-    await mutate('/generate', 'POST', { ...values, topic: values.topic.trim() || null, strategyContext: { ...cartoonContext, ...narrativeContext, ...campaignContext } }, 'Generation job started.');
+    await mutate('/generate', 'POST', { ...values, topic: values.topic.trim() || null, strategyContext: { ...cartoonContext, ...narrativeContext, mode: 'standard' } }, 'Generation job started.');
     $('#generate-dialog').close();
     event.currentTarget.reset();
   } catch (_error) { /* toast already shown */ }
-});
-
-document.querySelectorAll('[data-generation-mode]').forEach(button => {
-  button.addEventListener('click', () => {
-    const form = $('#generate-form');
-    const mode = button.dataset.generationMode;
-    form.dataset.generationMode = mode;
-    document.querySelectorAll('[data-generation-mode]').forEach(item => item.classList.toggle('selected', item === button));
-    $('#campaign-options').classList.toggle('hidden', mode !== 'campaign');
-  });
 });
 
 $('#idea-form').addEventListener('submit', async event => {
@@ -1791,6 +1946,6 @@ $('#api-key-button').addEventListener('click', () => {
 });
 
 const initialView = location.hash.slice(1);
-if (['overview', 'operator', 'pipeline', 'calendar', 'analytics', 'readiness', 'settings'].includes(initialView)) switchView(initialView);
+if (['overview', 'operator', 'pipeline', 'campaign', 'calendar', 'analytics', 'readiness', 'settings'].includes(initialView)) switchView(initialView);
 refreshDashboard();
 setInterval(() => refreshDashboard(true), 8000);

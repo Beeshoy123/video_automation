@@ -1,0 +1,17 @@
+{
+  "activeCampaignId": "new-campaign",
+  "campaigns": [
+    {
+      "id": "new-campaign",
+      "name": "New campaign",
+      "approvedFolder": "data\\campaigns\\new-campaign\\approved-footage",
+      "allowedExtensions": [
+        ".mp4",
+        ".mov",
+        ".mxf",
+        ".m4v"
+      ],
+      "requiredPhrases": []
+    }
+  ]
+}

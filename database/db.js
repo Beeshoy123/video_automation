@@ -779,6 +779,7 @@ class Database {
        LEFT JOIN publish_schedule sch ON sch.id = (
          SELECT id FROM publish_schedule WHERE production_id = p.id ORDER BY created_at DESC LIMIT 1
        )
+       WHERE p.status != 'rejected'
        ORDER BY p.created_at DESC LIMIT ?`,
       [limit]
     );

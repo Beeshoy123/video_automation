@@ -23,6 +23,7 @@ const { GenerationRecoveryService, GENERATION_STAGES } = require('./utils/genera
 const { ProvenanceService } = require('./utils/provenance-service');
 const { SceneRepairService } = require('./utils/scene-repair-service');
 const { ShortsRepurposingService } = require('./utils/shorts-repurposing-service');
+const { CampaignIntakeService } = require('./utils/campaign-intake-service');
 const { version } = require('./package.json');
 const chalk = require('chalk');
 
@@ -44,6 +45,7 @@ class YouTubeAutomationAgent {
     this.provenance = null;
     this.scenes = null;
     this.shorts = null;
+    this.campaignIntake = new CampaignIntakeService(__dirname);
     this.setupRequired = false;
   }
 
@@ -424,9 +426,101 @@ class YouTubeAutomationAgent {
   setupOperatorAPI() {
     const protect = this.requireAPIKey();
 
+    this.app.get('/api/campaigns', async (_req, res) => {
+      try { return res.json(await this.campaignIntake.listCampaigns()); } catch (error) { return res.status(500).json({ error: error.message }); }
+    });
+
+    this.app.post('/api/campaigns', protect, async (req, res) => {
+      try { return res.status(201).json({ success: true, campaign: await this.campaignIntake.createCampaign(req.body || {}) }); } catch (error) { return res.status(error.status || 500).json({ success: false, error: error.message }); }
+    });
+
+    this.app.put('/api/campaigns/active', protect, async (req, res) => {
+      try { return res.json({ success: true, campaign: await this.campaignIntake.setActiveCampaign(req.body?.campaignId) }); } catch (error) { return res.status(error.status || 500).json({ success: false, error: error.message }); }
+    });
+
+    this.app.post('/api/campaigns/:campaignId/caption', protect, async (req, res) => {
+      try {
+        const config = await this.campaignIntake.readConfig();
+        const campaign = this.campaignIntake.requireCampaign(req.params.campaignId, config);
+        return res.json({ success: true, result: this.campaignIntake.generateCaption(campaign, req.body || {}) });
+      } catch (error) { return res.status(error.status || 500).json({ success: false, error: error.message, code: error.code, validation: error.validation }); }
+    });
+
+    this.app.get('/api/campaigns/:campaignId/source-assets', async (req, res) => {
+      try {
+        return res.json(await this.campaignIntake.listAssets(req.params.campaignId));
+      } catch (error) {
+        return res.status(error.status || 500).json({ error: error.message });
+      }
+    });
+
+    this.app.put('/api/campaigns/:campaignId/source-assets', protect, express.raw({ type: ['video/*', 'application/octet-stream'], limit: '2gb' }), async (req, res) => {
+      try {
+        const asset = await this.campaignIntake.ingest(req.params.campaignId, {
+          buffer: req.body,
+          filename: req.get('x-file-name'),
+          sourceFolder: req.get('x-source-folder'),
+          contentType: req.get('content-type')
+        });
+        return res.status(201).json({ success: true, asset });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/campaigns/:campaignId/source-assets/:assetId/analyze', protect, async (req, res) => {
+      try {
+        const result = await this.campaignIntake.analyze(req.params.campaignId, req.params.assetId);
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.put('/api/campaigns/:campaignId/logo', protect, express.raw({ type: ['image/*'], limit: '10mb' }), async (req, res) => {
+      try {
+        const result = await this.campaignIntake.saveLogo(req.params.campaignId, { buffer: req.body, filename: req.get('x-file-name'), contentType: req.get('content-type') });
+        return res.status(201).json({ success: true, result });
+      } catch (error) { return res.status(error.status || 500).json({ success: false, error: error.message }); }
+    });
+
+    this.app.post('/api/campaigns/:campaignId/clips/render', protect, async (req, res) => {
+      try {
+        return res.status(201).json({ success: true, result: await this.campaignIntake.renderClip(req.params.campaignId, req.body || {}) });
+      } catch (error) { return res.status(error.status || 500).json({ success: false, error: error.message }); }
+    });
+
+    this.app.post('/api/campaigns/:campaignId/exports', protect, async (req, res) => {
+      try {
+        return res.status(201).json({ success: true, result: await this.campaignIntake.exportPackage(req.params.campaignId, req.body || {}) });
+      } catch (error) { return res.status(error.status || 500).json({ success: false, error: error.message, code: error.code, report: error.report }); }
+    });
+
+    this.app.get('/api/campaigns/:campaignId/exports/:packageId/:fileName', async (req, res) => {
+      try {
+        if (!/^[a-zA-Z0-9._-]+$/.test(req.params.packageId) || !/^[a-zA-Z0-9._-]+$/.test(req.params.fileName)) {
+          return res.status(400).json({ error: 'Invalid export package path' });
+        }
+        const allowedFiles = new Set(['tiktok.mp4', 'instagram-reels.mp4', 'youtube-shorts.mp4', 'caption.txt', 'compliance-report.json', 'provenance.json']);
+        if (!allowedFiles.has(req.params.fileName)) return res.status(404).json({ error: 'Export file not found' });
+        const exportRoot = path.resolve(__dirname, 'data', 'campaigns', req.params.campaignId, 'exports');
+        const resolved = path.resolve(exportRoot, req.params.packageId, req.params.fileName);
+        if (!resolved.startsWith(`${exportRoot}${path.sep}`)) return res.status(403).json({ error: 'Export path is not allowed' });
+        await fs.access(resolved);
+        return res.download(resolved, req.params.fileName);
+      } catch (_error) { return res.status(404).json({ error: 'Export file not found' }); }
+    });
+
+    this.app.post('/api/campaigns/:campaignId/compliance', protect, async (req, res) => {
+      try {
+        return res.json({ success: true, report: await this.campaignIntake.reviewPackage(req.params.campaignId, req.body || {}) });
+      } catch (error) { return res.status(error.status || 500).json({ success: false, error: error.message, report: error.report }); }
+    });
+
     this.app.get('/api/dashboard', async (_req, res) => {
       try {
-        const [stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation, channelStrategy, operatorRuns, readiness] = await Promise.all([
+        const campaignCatalog = await this.campaignIntake.listCampaigns();
+        const [stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation, channelStrategy, operatorRuns, readiness, campaignIntake] = await Promise.all([
           this.db.getStats(),
           this.db.listGenerationJobs(20),
           this.db.getPipelineOverview(50),
@@ -449,12 +543,13 @@ class YouTubeAutomationAgent {
           this.db.listOperatorRuns(10),
           this.readiness
             ? this.readiness.getSummary()
-            : Promise.resolve({ status: 'unverified', stale: false, blockingFailures: [], checks: [] })
+            : Promise.resolve({ status: 'unverified', stale: false, blockingFailures: [], checks: [] }),
+          this.campaignIntake.listAssets(campaignCatalog.activeCampaignId)
         ]);
         if (this.telemetry) void this.telemetry.sync(activation);
         res.json({
           stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation,
-          channelStrategy, operatorRuns, readiness,
+          channelStrategy, operatorRuns, readiness, campaignIntake, campaignCatalog,
           system: {
             initialized: this.isInitialized,
             setupRequired: this.setupRequired,
@@ -734,17 +829,22 @@ class YouTubeAutomationAgent {
     });
 
     this.app.post('/api/content/:productionId/reject', protect, async (req, res) => {
-      const bundle = await this.db.getProductionBundle(req.params.productionId);
-      if (!bundle) return res.status(404).json({ error: 'Content not found' });
-      await this.db.saveContentReview(bundle.id, {
-        status: 'rejected',
-        editorData: bundle.editorData,
-        qualityChecks: bundle.qualityChecks,
-        reviewNotes: req.body?.notes || 'Rejected by operator',
-        reviewedAt: new Date().toISOString()
-      });
-      await this.db.updateProductionStatus(bundle.id, 'rejected');
-      return res.json({ success: true });
+      try {
+        const bundle = await this.db.getProductionBundle(req.params.productionId);
+        if (!bundle) return res.status(404).json({ error: 'Content not found' });
+        const deletedAssets = await this.deleteRejectedProductionAssets(bundle);
+        await this.db.saveContentReview(bundle.id, {
+          status: 'rejected',
+          editorData: bundle.editorData,
+          qualityChecks: bundle.qualityChecks,
+          reviewNotes: req.body?.notes || 'Rejected by operator',
+          reviewedAt: new Date().toISOString()
+        });
+        await this.db.updateProductionStatus(bundle.id, 'rejected');
+        return res.json({ success: true, deletedAssets });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+      }
     });
 
     this.app.post('/api/content/:productionId/retry', protect, async (req, res) => {
@@ -1023,6 +1123,50 @@ class YouTubeAutomationAgent {
       await this.db.markNotificationRead(req.params.notificationId);
       return res.json({ success: true });
     });
+  }
+
+  async deleteRejectedProductionAssets(bundle) {
+    const candidates = new Set();
+    const addPath = value => {
+      if (typeof value === 'string' && value && !value.startsWith('http')) candidates.add(value);
+    };
+    const generatedAssetKeys = ['finalVideo', 'thumbnail', 'captions', 'audio', 'script'];
+    for (const key of generatedAssetKeys) {
+      const asset = bundle.assets?.[key];
+      addPath(asset?.path);
+      addPath(asset?.originalPath);
+    }
+    for (const scene of bundle.scenes || []) {
+      if (scene.assetOrigin !== 'uploaded') addPath(scene.assetPath);
+      addPath(scene.audioPath);
+    }
+    for (const clip of bundle.shorts || []) {
+      addPath(clip.outputPath);
+      addPath(clip.captionsPath);
+    }
+
+    const allowedRoots = [
+      path.resolve(__dirname, 'data', 'audio'),
+      path.resolve(__dirname, 'data', 'assets'),
+      path.resolve(__dirname, 'data', 'captions'),
+      path.resolve(__dirname, 'data', 'production'),
+      path.resolve(__dirname, 'data', 'scripts'),
+      path.resolve(__dirname, 'data', 'videos'),
+      path.resolve(__dirname, 'data', 'shorts'),
+      path.resolve(__dirname, 'uploads', 'thumbnails')
+    ];
+    const deleted = [];
+    for (const candidate of candidates) {
+      const resolved = path.resolve(candidate);
+      if (!allowedRoots.some(root => resolved === root || resolved.startsWith(`${root}${path.sep}`))) continue;
+      try {
+        await fs.rm(resolved, { force: true });
+        deleted.push(path.relative(__dirname, resolved));
+      } catch (error) {
+        this.logger.warn(`Could not delete rejected asset ${resolved}: ${error.message}`);
+      }
+    }
+    return deleted;
   }
 
   async startGenerationJob(input = {}) {

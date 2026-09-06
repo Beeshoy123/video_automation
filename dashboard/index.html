@@ -18,6 +18,7 @@
         <div class="nav-group nav-all-items">
           <button class="nav-item active" data-view="overview"><span>⌂</span> Overview</button>
           <button class="nav-item" data-view="pipeline"><span>≋</span> Pipeline <b id="review-badge" class="badge hidden">0</b></button>
+          <button class="nav-item" data-view="campaign"><span>▣</span> Campaign clips</button>
           <button class="nav-item" data-view="calendar"><span>□</span> Calendar &amp; ideas</button>
           <button class="nav-item" data-view="operator"><span>◎</span> Niche &amp; ideas</button>
           <button class="nav-item" data-view="readiness"><span>✓</span> Pipeline health</button>
@@ -167,6 +168,32 @@
         <div id="pipeline-list" class="pipeline-list"></div>
       </section>
 
+      <section id="campaign-view" class="view">
+        <div class="section-intro"><div><h2>Campaign Clip Builder</h2><p>Choose the campaign brief first. Only its approved source folder can enter the workflow.</p></div><span id="campaign-intake-status" class="status warning">No footage</span></div>
+        <article class="panel campaign-selector-panel"><div class="panel-heading"><div><p class="eyebrow">ACTIVE CAMPAIGN</p><h2>Campaign brief</h2></div><button type="button" id="new-campaign-button" class="button secondary small">New campaign</button></div><select id="active-campaign-select" aria-label="Active campaign"></select><p id="active-campaign-folder" class="meta-line"></p></article>
+        <article class="panel campaign-caption-panel"><div class="panel-heading"><div><p class="eyebrow">STEP 5 · CAPTION GENERATOR</p><h2>Build a compliant caption</h2><p>The exact phrase, required mention, disclosure, and hashtag limit come from the active campaign.</p></div><span id="campaign-caption-status" class="status warning">Not checked</span></div><form id="campaign-caption-form" class="campaign-caption-form"><label><span>Post text</span><textarea id="campaign-caption-body" rows="3" maxlength="600" placeholder="Describe the satisfying moment in this clip."></textarea></label><div class="form-grid two"><label><span>FTC disclosure</span><select id="campaign-caption-disclosure"><option>#Ad</option><option>#Advertisement</option><option>#Sponsored</option></select></label><label><span>Additional hashtags</span><input id="campaign-caption-hashtags" placeholder="#Gaming #Gameplay #Shorts"></label></div><button type="submit" class="button secondary">Generate compliant caption</button></form><pre id="campaign-caption-preview" class="campaign-caption-preview">Create or select a campaign to see its caption rules.</pre></article>
+        <div class="campaign-builder-grid">
+          <article class="panel campaign-upload-panel">
+            <div class="panel-heading"><div><p class="eyebrow">STEP 2 · FOOTAGE INTAKE</p><h2>Upload official footage</h2><p>Files are locked to the approved campaign folder and recorded with a SHA-256 provenance fingerprint.</p></div></div>
+            <form id="campaign-upload-form" class="campaign-upload-form">
+              <label class="upload-dropzone"><span class="upload-icon">↑</span><strong>Choose a MediaSilo video file</strong><small>MP4, MOV, MXF, or M4V</small><input id="campaign-source-file" type="file" accept="video/mp4,video/quicktime,video/x-mxf,video/x-m4v" required></label>
+              <label><span>Approved source folder</span><input id="campaign-approved-folder" readonly></label>
+              <button type="submit" class="button primary">Add approved footage</button>
+            </form>
+            <form id="campaign-logo-form" class="campaign-upload-form">
+              <label><span>Official campaign logo</span><input id="campaign-logo-file" type="file" accept="image/png,image/jpeg,image/webp" required></label>
+              <button type="submit" class="button secondary">Save official logo</button>
+            </form>
+          </article>
+          <article class="panel campaign-rules-panel">
+            <div class="panel-heading"><div><p class="eyebrow">CAMPAIGN LOCKS</p><h2 id="active-campaign-name">New campaign</h2></div><span class="status success">Locked</span></div>
+            <div class="campaign-lock-list"><span>✓ Official source footage only</span><span>✓ Original audio retained</span><span>✓ Approved folder enforced</span><span>✓ Provenance recorded per file</span></div>
+          </article>
+        </div>
+        <article class="panel campaign-assets-panel"><div class="panel-heading"><div><p class="eyebrow">APPROVED SOURCE LIBRARY</p><h2>Choose a highlight</h2><p>Analyze scene changes and audio signals, then select an eligible 10–30 second window.</p></div><span id="campaign-asset-count" class="status">0 files</span></div><div id="campaign-asset-list" class="campaign-asset-list"></div></article>
+        <article id="campaign-compliance-panel" class="panel campaign-compliance-panel hidden"><div class="panel-heading"><div><p class="eyebrow">STEP 6 · COMPLIANCE GATE</p><h2>Pre-export review</h2><p>Every check must pass before the three platform exports are created.</p></div><span id="campaign-compliance-status" class="status warning">Not checked</span></div><div id="campaign-compliance-checks" class="campaign-compliance-checks"></div><button id="campaign-export-button" type="button" class="button primary hidden">Export package</button><div id="campaign-export-files" class="campaign-export-files hidden"></div></article>
+      </section>
+
       <section id="calendar-view" class="view">
         <div class="split-heading"><div><h2>Calendar & idea backlog</h2><p>Shape the queue before generation starts.</p></div><button id="add-idea-button" class="button secondary">＋ Add idea</button></div>
         <div class="calendar-grid">
@@ -266,18 +293,6 @@
   <dialog id="generate-dialog" class="dialog visual-create-dialog">
     <form id="generate-form" class="visual-create-form" method="dialog">
       <div class="dialog-heading"><div><p class="eyebrow">VISUAL CREATE STUDIO</p><h2>Generate a video</h2><p class="studio-dialog-subtitle">Shape the first frame, then let the production pipeline build the story.</p></div><button type="button" class="close-button" data-close>×</button></div>
-      <section class="create-mode-switch" aria-labelledby="create-mode-heading">
-        <div><p class="eyebrow">WORKFLOW MODE</p><h3 id="create-mode-heading">What are you making?</h3></div>
-        <div class="segmented-control" role="group" aria-label="Generation mode">
-          <button type="button" class="selected" data-generation-mode="standard">Standard video</button>
-          <button type="button" data-generation-mode="campaign">Campaign clip</button>
-        </div>
-      </section>
-      <section id="campaign-options" class="campaign-options hidden" aria-labelledby="campaign-heading">
-        <div class="form-section-heading"><span class="step-number">C</span><div><h3 id="campaign-heading">Campaign setup</h3><p>Use approved source footage and required campaign rules.</p></div></div>
-        <label><span>Campaign</span><select name="campaignId"><option value="content-rewards-mw4">Content Rewards · MW4 Open Beta</option></select></label>
-        <p class="callout">Campaign clip mode is prepared for approved footage, required overlays, logo watermarking, and compliance checks.</p>
-      </section>
       <div class="create-studio-layout">
         <aside class="create-preview-panel">
           <div class="create-preview-frame" data-create-preview>
