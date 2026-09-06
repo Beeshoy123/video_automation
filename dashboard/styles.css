@@ -1,3 +1,17 @@
+@font-face {
+  font-family: "Be Vietnam Pro";
+  src: url('/fonts/BeVietnamPro-Medium.ttf') format('truetype');
+  font-weight: 400 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Be Vietnam Pro";
+  src: url('/fonts/BeVietnamPro-Bold.ttf') format('truetype');
+  font-weight: 700 900;
+  font-style: normal;
+  font-display: swap;
+}
 :root {
   --bg: #080b10;
   --panel: #101720;
@@ -25,8 +39,8 @@
   --radius: var(--radius-lg);
   --thumb-landscape: 16 / 9;
   --thumb-vertical: 9 / 16;
-  --font-ui: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
-  --font-display: "Avenir Next Demi Bold", "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+  --font-ui: "Be Vietnam Pro", "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+  --font-display: "Be Vietnam Pro", "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
   font-family: var(--font-ui);
 }
 * { box-sizing: border-box; }
@@ -308,6 +322,7 @@ input:focus, textarea:focus, select:focus { border-color: #636d7c; box-shadow: 0
 .campaign-asset > div:last-child { justify-items: end; }
 .campaign-asset strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .campaign-asset span:not(.status) { color: var(--muted); font-size: 11px; }
+.campaign-proposals { display: flex; flex-wrap: wrap; gap: 7px; grid-column: 1 / -1; }
 @media (max-width: 780px) { .campaign-builder-grid { grid-template-columns: 1fr; } .campaign-asset { align-items: start; flex-direction: column; } .campaign-asset > div:last-child { justify-items: start; } }
 .calendar-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .operator-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, .85fr); gap: 18px; align-items: start; }

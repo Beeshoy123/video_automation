@@ -1757,13 +1757,27 @@ $('#campaign-asset-list')?.addEventListener('click', async event => {
     showToast(proposalText, proposals.length ? 'success' : 'error');
     if (proposals.length) {
       const card = button.closest('.campaign-asset');
-      card.insertAdjacentHTML('beforeend', `<div class="campaign-proposals">${proposals.slice(0, 5).map(proposal => `<button type="button" class="button primary small" data-render-campaign-clip="${escapeHTML(button.dataset.analyzeCampaignAsset)}" data-start="${proposal.startSeconds}" data-duration="${proposal.duration}">Render ${proposal.duration}s clip</button>`).join('')}</div>`);
+      card.insertAdjacentHTML('beforeend', `<div class="campaign-proposals"><button type="button" class="button primary small" data-render-campaign-batch="${escapeHTML(button.dataset.analyzeCampaignAsset)}" data-proposals="${escapeHTML(JSON.stringify(proposals))}">Render all highlights</button>${proposals.slice(0, 5).map(proposal => `<button type="button" class="button secondary small" data-render-campaign-clip="${escapeHTML(button.dataset.analyzeCampaignAsset)}" data-start="${proposal.startSeconds}" data-duration="${proposal.duration}">Render ${proposal.duration}s clip</button>`).join('')}</div>`);
     }
   } catch (_error) { /* toast already shown */ }
   finally { button.disabled = false; button.textContent = 'Analyze highlights'; }
 });
 
 $('#campaign-asset-list')?.addEventListener('click', async event => {
+  const batchButton = event.target.closest('[data-render-campaign-batch]');
+  if (batchButton) {
+    const captionText = prompt('Caption text for the clips', 'Highlight moment');
+    if (captionText === null) return;
+    batchButton.disabled = true;
+    batchButton.textContent = 'Rendering batch…';
+    try {
+      const proposals = JSON.parse(batchButton.dataset.proposals || '[]');
+      const result = await mutate(`/api/campaigns/${encodeURIComponent(activeCampaign().id)}/clips/render-batch`, 'POST', { assetId: batchButton.dataset.renderCampaignBatch, proposals, captionText }, 'Batch render queued.');
+      await watchCampaignJob(result.job.id);
+    } catch (_error) { /* toast already shown */ }
+    finally { batchButton.disabled = false; batchButton.textContent = 'Render all highlights'; }
+    return;
+  }
   const button = event.target.closest('[data-render-campaign-clip]');
   if (!button) return;
   const captionText = prompt('Caption text for the clip', 'Highlight moment');
@@ -1779,6 +1793,22 @@ $('#campaign-asset-list')?.addEventListener('click', async event => {
     }
   } catch (_error) { /* toast already shown */ }
 });
+
+async function watchCampaignJob(jobId) {
+  const campaignId = encodeURIComponent(activeCampaign().id);
+  const poll = async () => {
+    const response = await api(`/api/campaigns/${campaignId}/jobs/${encodeURIComponent(jobId)}`);
+    const job = response.job;
+    if (job.status === 'completed') {
+      showToast(`${job.rendered} rendered · ${job.failed} failed`, job.failed ? 'error' : 'success');
+      return;
+    }
+    if (job.status === 'failed') throw new Error(job.error || 'Campaign render job failed');
+    showToast(`Rendering campaign clips: ${job.progress || 0}%`);
+    setTimeout(poll, 1000);
+  };
+  await poll();
+}
 
 async function reviewCampaignCompliance(outputPath) {
   const status = $('#campaign-compliance-status');

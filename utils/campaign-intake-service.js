@@ -1,10 +1,7 @@
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs').promises;
-const { execFile } = require('child_process');
-const { promisify } = require('util');
-
-const execFileAsync = promisify(execFile);
+const { LocalFfmpegCampaignProvider } = require('./campaign-media-provider');
 
 const DEFAULT_CAMPAIGN = {
   id: 'new-campaign',
@@ -17,9 +14,7 @@ const DEFAULT_CAMPAIGN = {
 class CampaignIntakeService {
   constructor(rootDir, options = {}) {
     this.rootDir = rootDir;
-    this.execFile = options.execFile || execFileAsync;
-    this.ffprobePath = options.ffprobePath || process.env.FFPROBE_PATH || 'ffprobe';
-    this.ffmpegPath = options.ffmpegPath || process.env.FFMPEG_PATH || 'ffmpeg';
+    this.mediaProvider = options.mediaProvider || new LocalFfmpegCampaignProvider(options);
     this.configPath = path.resolve(rootDir, 'data', 'campaigns', 'campaigns.json');
   }
 
@@ -135,9 +130,9 @@ class CampaignIntakeService {
       throw error;
     }
     const filePath = this.resolveAssetPath(asset);
-    const metadata = await this.probe(filePath);
-    metadata.audioPeak = await this.detectAudioPeak(filePath);
-    const sceneChanges = await this.detectSceneChanges(filePath);
+    const metadata = await this.mediaProvider.probe(filePath);
+    metadata.audioPeak = await this.mediaProvider.detectAudioPeak(filePath);
+    const sceneChanges = await this.mediaProvider.detectSceneChanges(filePath);
     const duration = Number(metadata.duration || 0);
     const proposals = this.buildProposals(duration, sceneChanges, metadata.audioPeak);
     const result = { assetId, duration, audio: metadata.audio, sceneChanges, proposals, analyzedAt: new Date().toISOString() };
@@ -174,24 +169,86 @@ class CampaignIntakeService {
     const startSeconds = Number(input.startSeconds);
     const duration = Number(input.duration);
     if (!Number.isFinite(startSeconds) || !Number.isFinite(duration) || duration < 10 || duration > 30) throw this.invalid('Clip duration must be between 10 and 30 seconds');
-    const metadata = await this.probe(sourcePath);
+    const metadata = await this.mediaProvider.probe(sourcePath);
     if (!metadata.audio) throw this.invalid('Approved source must contain original audio');
     if (startSeconds < 0 || startSeconds + duration > metadata.duration + 0.05) throw this.invalid('Clip window is outside the approved source duration');
     const outputDir = path.resolve(this.rootDir, 'data', 'campaigns', campaignId, 'clips');
     await fs.mkdir(outputDir, { recursive: true });
     const outputPath = path.join(outputDir, `clip-${Date.now()}.mp4`);
+    const captionsPath = `${outputPath}.srt`;
     const caption = this.generateCaption(campaign, input);
     const captionText = caption.text;
-    const text = this.escapeFilterText(campaign.requiredPhrases?.[0] || 'Campaign highlight');
-    const secondText = this.escapeFilterText(campaign.requiredPhrases?.[1] || '');
-    const captionOverlay = this.escapeFilterText(captionText);
-    const filter = `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,drawtext=text='${text}':fontcolor=white:fontsize=52:borderw=3:bordercolor=black:x=(w-text_w)/2:y=100${secondText ? `,drawtext=text='${secondText}':fontcolor=white:fontsize=48:borderw=3:bordercolor=black:x=(w-text_w)/2:y=175` : ''},drawtext=text='${captionOverlay}':fontcolor=white:fontsize=42:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h-260[base];[1:v]scale=260:-1[logo];[base][logo]overlay=W-w-42:42[outv]`;
-    await this.execFile(this.ffmpegPath, ['-y', '-ss', String(startSeconds), '-i', sourcePath, '-i', logoPath, '-t', String(duration), '-filter_complex', filter, '-map', '[outv]', '-map', '0:a:0', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', '-shortest', outputPath], { maxBuffer: 8 * 1024 * 1024 });
-    const outputMetadata = await this.probe(outputPath);
+    const subtitleText = String(input.subtitleText || input.body || input.captionText || 'Highlight moment').trim();
+    await fs.writeFile(captionsPath, this.buildTimedSrt(subtitleText, duration), 'utf8');
+    await this.mediaProvider.render(this.buildRenderArgs({ sourcePath, logoPath, outputPath, startSeconds, duration, captionsPath, requiredPhrases: campaign.requiredPhrases }));
+    const outputMetadata = await this.mediaProvider.probe(outputPath);
     if (!outputMetadata.audio || outputMetadata.duration < 10) throw new Error('Rendered campaign clip failed MP4 audio or duration validation');
-    const result = { campaignId, assetId: asset.id, sourcePath: asset.path, logoPath: campaign.logoPath, outputPath: path.relative(this.rootDir, outputPath), startSeconds, duration, format: '9:16', originalAudioOnly: true, addedMusic: false, requiredPhrases: campaign.requiredPhrases, captionText, captionValidation: caption.validation, createdAt: new Date().toISOString() };
+    const result = { campaignId, assetId: asset.id, sourcePath: asset.path, logoPath: campaign.logoPath, outputPath: path.relative(this.rootDir, outputPath), captionsPath: path.relative(this.rootDir, captionsPath), startSeconds, duration, format: '9:16', originalAudioOnly: true, addedMusic: false, provider: this.mediaProvider.describe(), requiredPhrases: campaign.requiredPhrases, captionText, subtitleText, captionValidation: caption.validation, createdAt: new Date().toISOString() };
     await fs.writeFile(`${outputPath}.json`, JSON.stringify(result, null, 2));
     return result;
+  }
+
+  buildRenderArgs({ sourcePath, logoPath, outputPath, startSeconds, duration, captionsPath, requiredPhrases = [] }) {
+    const text = this.escapeFilterText(requiredPhrases[0] || 'Campaign highlight');
+    const secondText = this.escapeFilterText(requiredPhrases[1] || '');
+    const subtitlePath = this.escapeSubtitlePath(captionsPath);
+    const fontsDir = this.escapeSubtitlePath(path.resolve(this.rootDir, 'dashboard', 'fonts'));
+    const subtitles = `subtitles='${subtitlePath}':fontsdir='${fontsDir}':force_style='FontName=Be Vietnam Pro,FontSize=18,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=180'`;
+    const titleLayer = `drawtext=text='${text}':fontcolor=white:fontsize=52:borderw=3:bordercolor=black:x=(w-text_w)/2:y=100`;
+    const secondLayer = secondText ? `,drawtext=text='${secondText}':fontcolor=white:fontsize=48:borderw=3:bordercolor=black:x=(w-text_w)/2:y=175` : '';
+    const filter = `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,${titleLayer}${secondLayer},${subtitles}[base];[1:v]scale=260:-1[logo];[base][logo]overlay=W-w-42:42:shortest=1,fps=30,format=yuv420p[outv]`;
+    return [
+      '-y', '-ss', String(startSeconds), '-i', sourcePath,
+      '-loop', '1', '-i', logoPath, '-t', String(duration),
+      '-filter_complex', filter, '-map', '[outv]', '-map', '0:a:0', '-map_metadata', '-1',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p', '-r', '30',
+      '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', '-shortest', outputPath
+    ];
+  }
+
+  async renderBatch(campaignId, input = {}) {
+    const proposals = Array.isArray(input.proposals) ? input.proposals.slice(0, 20) : [];
+    if (!proposals.length) throw this.invalid('At least one highlight proposal is required');
+    const results = [];
+    const failures = [];
+    for (const [index, proposal] of proposals.entries()) {
+      try {
+        results.push(await this.renderClip(campaignId, {
+          ...input,
+          assetId: input.assetId,
+          startSeconds: proposal.startSeconds,
+          duration: proposal.duration,
+          subtitleText: proposal.subtitleText || input.subtitleText,
+          body: proposal.body || input.body,
+          captionText: proposal.captionText || input.captionText
+        }));
+      } catch (error) {
+        failures.push({ proposalId: proposal.id || null, startSeconds: proposal.startSeconds, duration: proposal.duration, error: error.message });
+      }
+      if (typeof input.onProgress === 'function') await input.onProgress({ completed: index + 1, total: proposals.length, rendered: results.length, failed: failures.length });
+    }
+    return { campaignId, requested: proposals.length, rendered: results.length, failed: failures.length, results, failures };
+  }
+
+  buildTimedSrt(text, duration) {
+    const words = String(text || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+    if (!words.length) return '1\n00:00:00,000 --> 00:00:10,000\nHighlight moment\n';
+    const chunks = [];
+    for (let index = 0; index < words.length; index += 6) chunks.push(words.slice(index, index + 6).join(' '));
+    const segment = Number(duration) / chunks.length;
+    return chunks.map((chunk, index) => `${index + 1}\n${this.srtTime(index * segment)} --> ${this.srtTime(Math.min(Number(duration), (index + 1) * segment))}\n${chunk}\n`).join('\n');
+  }
+
+  srtTime(seconds) {
+    const milliseconds = Math.max(0, Math.round(Number(seconds || 0) * 1000));
+    const hours = Math.floor(milliseconds / 3600000);
+    const minutes = Math.floor((milliseconds % 3600000) / 60000);
+    const secs = Math.floor((milliseconds % 60000) / 1000);
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(milliseconds % 1000).padStart(3, '0')}`;
+  }
+
+  escapeSubtitlePath(filePath) {
+    return path.resolve(filePath).replaceAll('\\', '/').replaceAll(':', '\\:').replaceAll("'", "\\'");
   }
 
   generateCaption(campaign, input = {}) {
@@ -255,9 +312,11 @@ class CampaignIntakeService {
     }
     const captionPath = path.join(outputDir, 'caption.txt');
     await fs.writeFile(captionPath, clip.captionText, 'utf8');
+    const captionsPath = path.join(outputDir, 'captions.srt');
+    await fs.copyFile(path.resolve(this.rootDir, clip.captionsPath), captionsPath);
     const provenancePath = path.join(outputDir, 'provenance.json');
-    await fs.writeFile(provenancePath, JSON.stringify({ source: clip.sourcePath, sourceAssetId: clip.assetId, sourceFolder: campaign.approvedFolder, logo: clip.logoPath, generatedClip: clip.outputPath }, null, 2));
-    return { campaignId, packageId: path.basename(outputDir), passed: true, files: { ...platformFiles, caption: path.relative(this.rootDir, captionPath), complianceReport: path.relative(this.rootDir, reportPath), provenance: path.relative(this.rootDir, provenancePath) }, report };
+    await fs.writeFile(provenancePath, JSON.stringify({ source: clip.sourcePath, sourceAssetId: clip.assetId, sourceFolder: campaign.approvedFolder, logo: clip.logoPath, generatedClip: clip.outputPath, captions: clip.captionsPath, provider: clip.provider || null }, null, 2));
+    return { campaignId, packageId: path.basename(outputDir), passed: true, files: { ...platformFiles, caption: path.relative(this.rootDir, captionPath), captions: path.relative(this.rootDir, captionsPath), complianceReport: path.relative(this.rootDir, reportPath), provenance: path.relative(this.rootDir, provenancePath) }, report };
   }
 
   async reviewPackage(campaignId, input = {}) {
@@ -282,7 +341,7 @@ class CampaignIntakeService {
     const outputPath = path.resolve(this.rootDir, clip.outputPath);
     const sourcePath = path.resolve(this.rootDir, clip.sourcePath);
     const logoPath = path.resolve(this.rootDir, clip.logoPath);
-    const metadata = await this.probe(outputPath);
+    const metadata = await this.mediaProvider.probe(outputPath);
     const sourceInsideFolder = sourcePath.startsWith(`${path.resolve(this.rootDir, campaign.approvedFolder)}${path.sep}`);
     const caption = String(clip.captionText || '').trim();
     const disclosure = /^(#Ad|#Advertisement|#Sponsored)$/im.test(caption);
@@ -300,6 +359,7 @@ class CampaignIntakeService {
       { id: 'minimum_duration', label: 'Minimum 10 seconds', passed: metadata.duration >= 10 },
       { id: 'valid_mp4', label: 'Valid MP4 with video and audio', passed: metadata.video && metadata.audio },
       { id: 'english_captions', label: 'English captions present', passed: /[A-Za-z]/.test(caption) && !/[\u0400-\u04FF\u4E00-\u9FFF]/.test(caption) },
+      { id: 'timed_captions', label: 'Timed subtitle file present', passed: Boolean(clip.captionsPath) && await this.exists(path.resolve(this.rootDir, clip.captionsPath)) },
       { id: 'caption_phrase', label: 'Exact caption phrase', passed: exactPhrase },
       { id: 'mention', label: 'Required account mention', passed: mention },
       { id: 'ftc_disclosure', label: 'FTC disclosure placement', passed: disclosure && disclosureLine >= 0 && disclosureLine === firstHashtag },
@@ -319,36 +379,8 @@ class CampaignIntakeService {
     return resolved;
   }
 
-  async probe(filePath) {
-    const { stdout } = await this.execFile(this.ffprobePath, ['-v', 'error', '-show_entries', 'format=duration:stream=codec_type,width,height', '-of', 'json', filePath], { maxBuffer: 1024 * 1024 });
-    const parsed = JSON.parse(stdout || '{}');
-    const streams = Array.isArray(parsed.streams) ? parsed.streams : [];
-    const video = streams.find(stream => stream.codec_type === 'video');
-    return { duration: Number(parsed.format?.duration || 0), audio: streams.some(stream => stream.codec_type === 'audio'), video: Boolean(video), width: Number(video?.width || 0), height: Number(video?.height || 0), audioPeak: null };
-  }
-
   async exists(filePath) {
     try { await fs.access(filePath); return true; } catch (_error) { return false; }
-  }
-
-  async detectSceneChanges(filePath) {
-    try {
-      const { stderr } = await this.execFile(this.ffmpegPath, ['-hide_banner', '-i', filePath, '-filter:v', "select='gt(scene,0.35)',showinfo", '-f', 'null', '-'], { maxBuffer: 4 * 1024 * 1024 });
-      return [...stderr.matchAll(/pts_time:([0-9.]+)/g)].map(match => Number(match[1])).filter(Number.isFinite);
-    } catch (_error) {
-      return [];
-    }
-  }
-
-  async detectAudioPeak(filePath) {
-    try {
-      const { stderr } = await this.execFile(this.ffmpegPath, ['-hide_banner', '-i', filePath, '-af', 'volumedetect', '-f', 'null', '-'], { maxBuffer: 2 * 1024 * 1024 });
-      const match = stderr.match(/max_volume:\s*(-?[0-9.]+) dB/);
-      const maxVolume = match ? Number(match[1]) : null;
-      return Number.isFinite(maxVolume) ? { maxVolume, high: maxVolume >= -12 } : null;
-    } catch (_error) {
-      return null;
-    }
   }
 
   buildProposals(duration, sceneChanges, audioPeak) {

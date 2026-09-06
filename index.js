@@ -36,6 +36,7 @@ class YouTubeAutomationAgent {
     this.app = express();
     this.isInitialized = false;
     this.activeJobs = new Map();
+    this.campaignJobs = new Map();
     this.operator = null;
     this.autonomous = null;
     this.activation = null;
@@ -490,6 +491,19 @@ class YouTubeAutomationAgent {
       } catch (error) { return res.status(error.status || 500).json({ success: false, error: error.message }); }
     });
 
+    this.app.post('/api/campaigns/:campaignId/clips/render-batch', protect, async (req, res) => {
+      try {
+        const job = await this.startCampaignRenderJob(req.params.campaignId, req.body || {});
+        return res.status(202).json({ success: true, job });
+      } catch (error) { return res.status(error.status || 500).json({ success: false, error: error.message }); }
+    });
+
+    this.app.get('/api/campaigns/:campaignId/jobs/:jobId', async (req, res) => {
+      const job = this.campaignJobs.get(req.params.jobId);
+      if (!job || job.campaignId !== req.params.campaignId) return res.status(404).json({ error: 'Campaign job not found' });
+      return res.json({ success: true, job: { ...job, promise: undefined } });
+    });
+
     this.app.post('/api/campaigns/:campaignId/exports', protect, async (req, res) => {
       try {
         return res.status(201).json({ success: true, result: await this.campaignIntake.exportPackage(req.params.campaignId, req.body || {}) });
@@ -501,7 +515,7 @@ class YouTubeAutomationAgent {
         if (!/^[a-zA-Z0-9._-]+$/.test(req.params.packageId) || !/^[a-zA-Z0-9._-]+$/.test(req.params.fileName)) {
           return res.status(400).json({ error: 'Invalid export package path' });
         }
-        const allowedFiles = new Set(['tiktok.mp4', 'instagram-reels.mp4', 'youtube-shorts.mp4', 'caption.txt', 'compliance-report.json', 'provenance.json']);
+        const allowedFiles = new Set(['tiktok.mp4', 'instagram-reels.mp4', 'youtube-shorts.mp4', 'caption.txt', 'captions.srt', 'compliance-report.json', 'provenance.json']);
         if (!allowedFiles.has(req.params.fileName)) return res.status(404).json({ error: 'Export file not found' });
         const exportRoot = path.resolve(__dirname, 'data', 'campaigns', req.params.campaignId, 'exports');
         const resolved = path.resolve(exportRoot, req.params.packageId, req.params.fileName);
@@ -1123,6 +1137,36 @@ class YouTubeAutomationAgent {
       await this.db.markNotificationRead(req.params.notificationId);
       return res.json({ success: true });
     });
+  }
+
+  async startCampaignRenderJob(campaignId, input = {}) {
+    const proposals = Array.isArray(input.proposals) ? input.proposals.slice(0, 20) : [];
+    if (!proposals.length) {
+      const error = new Error('At least one highlight proposal is required');
+      error.status = 400;
+      throw error;
+    }
+    if ([...this.campaignJobs.values()].some(job => job.status === 'running' && job.campaignId === campaignId)) {
+      const error = new Error('A campaign render job is already running');
+      error.status = 429;
+      throw error;
+    }
+    const id = `campaign_job_${require('crypto').randomUUID()}`;
+    const job = { id, campaignId, type: 'render_batch', status: 'queued', progress: 0, total: proposals.length, completed: 0, rendered: 0, failed: 0, result: null, error: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    this.campaignJobs.set(id, job);
+    job.promise = this.campaignIntake.renderBatch(campaignId, {
+      ...input,
+      proposals,
+      onProgress: progress => {
+        Object.assign(job, progress, { progress: Math.round((progress.completed / progress.total) * 100), status: 'running', updatedAt: new Date().toISOString() });
+      }
+    }).then(result => Object.assign(job, result, { status: 'completed', progress: 100, updatedAt: new Date().toISOString() }))
+      .catch(error => Object.assign(job, { status: 'failed', error: error.message, updatedAt: new Date().toISOString() }))
+      .finally(() => {
+        delete job.promise;
+        setTimeout(() => this.campaignJobs.delete(id), 24 * 60 * 60 * 1000);
+      });
+    return { ...job, promise: undefined };
   }
 
   async deleteRejectedProductionAssets(bundle) {
