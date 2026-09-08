@@ -47,9 +47,23 @@ The same generation workflow is available from the CLI while the app is running:
 npm run generate -- --topic "How AI changes everyday work" --format 9:16 --wait
 npm run generate -- --topic "First idea" --topic "Second idea"
 npm run generate -- --batch-file topics.json
+npm run generate -- --batch-file topics.json --api-key "$YAA_API_KEY" --dry-run
 ```
 
 The CLI submits jobs to the dashboard API, so provider routing, review gates, checkpoints, audio, subtitles, and output formats behave the same way as they do in the WebUI.
+It accepts up to 100 topics per batch and supports scene duration, fit mode, transitions, music volume, voice rate and volume, subtitle position, size, color, and background options. Use `YAA_API_KEY` or `--api-key` for protected dashboards; `--dry-run` validates the manifest and prints the resolved strategy without queueing work.
+
+Captions use deterministic script timing by default. For speech-aligned SRT captions, set `CAPTION_TRANSCRIPTION=openai` and configure `OPENAI_API_KEY`; the optional transcription pass uses `whisper-1` and falls back to script timing if the request fails.
+
+### Docker deployment
+
+Docker provides the same dashboard and API on port `3456`, with persistent volumes for production data, configuration, logs, uploads, and temporary processing files:
+
+```bash
+docker compose up -d --build
+```
+
+Set provider keys and `API_KEY` in the environment before starting Compose. Check the container with `http://localhost:3456/health`; stop it with `docker compose down`. The Compose file keeps credentials and generated media in named Docker volumes rather than inside the disposable container.
 
 Already know what you are doing? `npm run setup` offers a shorter classic flow, and `.env.example` documents every setting.
 

@@ -1,0 +1,12 @@
+node_modules
+.venv
+.git
+.env
+config/credentials.json
+config/tokens.json
+data/youtube_automation.db
+logs
+uploads
+_temp
+.DS_Store
+npm-debug.log*

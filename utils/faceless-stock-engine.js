@@ -4,6 +4,7 @@ const axios = require('axios');
 const { AITextService } = require('./ai-text-service');
 const { runFFmpeg } = require('./ffmpeg');
 const { Logger } = require('./logger');
+const { StockMediaCache } = require('./stock-media-cache');
 
 const DEFAULT_SCENE_COUNT = 8;
 const DEFAULT_VOICE = 'en-US-AvaNeural';
@@ -33,6 +34,7 @@ class FacelessStockEngine {
     this.pexelsKey = options.pexelsKey || resolvedCredentials.pexels?.apiKey || process.env.PEXELS_API_KEY;
     this.voice = options.voice || process.env.FACELESS_TTS_VOICE || DEFAULT_VOICE;
     this.http = options.http || axios;
+    this.mediaCache = options.mediaCache || new StockMediaCache(path.resolve(__dirname, '..', 'data', 'media-cache'));
     this.sceneCount = Math.max(4, Math.min(10, Number(options.sceneCount || process.env.FACELESS_SCENE_COUNT || DEFAULT_SCENE_COUNT)));
   }
 
@@ -130,29 +132,61 @@ class FacelessStockEngine {
   }
 
   async searchVideo(query) {
+    const params = { orientation: 'portrait', size: 'medium', per_page: 5 };
+    const cached = await this.mediaCache.readSearch('pexels', query, params);
+    if (cached?.length) return cached[0];
     const response = await this.http.get('https://api.pexels.com/videos/search', {
       headers: { Authorization: this.pexelsKey },
-      params: { query, orientation: 'portrait', size: 'medium', per_page: 5 },
+      params: { query, ...params },
       timeout: 15000
     });
     const videos = (response.data?.videos || []).filter(video => video.duration >= 3);
     const selected = (videos.length ? videos : response.data?.videos || [])[0];
     if (!selected) return null;
     const files = [...(selected.video_files || [])].sort((a, b) => (b.width * b.height) - (a.width * a.height));
-    return files[0]?.link || null;
+    if (!files[0]?.link) return null;
+    const result = {
+      provider: 'pexels',
+      assetId: String(selected.id || ''),
+      sourcePage: selected.url || null,
+      creator: selected.user?.name || null,
+      query,
+      duration: Number(selected.duration || 0),
+      width: Number(files[0].width || 0),
+      height: Number(files[0].height || 0),
+      url: files[0].link
+    };
+    await this.mediaCache.writeSearch('pexels', query, params, [result]);
+    return result;
   }
 
   async downloadPair(scene, videoDir, sceneId) {
     const queries = [scene.visual_1, scene.visual_2 || scene.visual_1];
     const paths = [];
     for (const [index, query] of queries.entries()) {
-      let url = null;
-      try { url = await this.searchVideo(query); } catch (error) { this.logger.warn(`Pexels search failed for scene ${sceneId}: ${error.message}`); }
-      if (url) {
+      let source = null;
+      try { source = await this.searchVideo(query); } catch (error) { this.logger.warn(`Pexels search failed for scene ${sceneId}: ${error.message}`); }
+      if (source?.url) {
         const target = path.join(videoDir, `scene-${sceneId}-${index + 1}.mp4`);
-        const response = await this.http.get(url, { responseType: 'arraybuffer', timeout: 30000 });
-        await fs.writeFile(target, response.data);
-        paths.push({ path: target, url, query });
+        const cachedDownload = await this.mediaCache.materialize('pexels', source.url);
+        if (!cachedDownload.hit) {
+          const response = await this.http.get(source.url, { responseType: 'arraybuffer', timeout: 30000 });
+          await fs.writeFile(cachedDownload.filePath, response.data);
+        }
+        await fs.copyFile(cachedDownload.filePath, target);
+        paths.push({
+          path: target,
+          query,
+          provider: source.provider,
+          assetId: source.assetId,
+          sourcePage: source.sourcePage,
+          creator: source.creator,
+          duration: source.duration,
+          width: source.width,
+          height: source.height,
+          cacheHit: cachedDownload.hit,
+          checksum: await this.mediaCache.checksum(cachedDownload.filePath)
+        });
       }
     }
     if (!paths.length) throw new Error(`Pexels returned no usable videos for scene ${sceneId}`);

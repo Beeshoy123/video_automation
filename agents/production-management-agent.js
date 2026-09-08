@@ -6,6 +6,7 @@ const { SceneRepairService } = require('../utils/scene-repair-service');
 const { FacelessStockEngine } = require('../utils/faceless-stock-engine');
 const { NarrativeStoryEngine } = require('../utils/narrative-story-engine');
 const { runFFmpeg } = require('../utils/ffmpeg');
+const { CaptionService } = require('../utils/caption-service');
 const mediaLibrary = require('../utils/media-library');
 
 class ProductionManagementAgent {
@@ -16,6 +17,10 @@ class ProductionManagementAgent {
     this.pipeline = [];
     this.assets = new Map();
     this.aiVideoGenerator = new AIVideoGenerator(credentials, { db });
+    this.captionService = new CaptionService({
+      logger: this.logger,
+      transcriber: audioPath => this.aiVideoGenerator.transcribeAudioToSrt(audioPath)
+    });
     this.sceneRepair = new SceneRepairService(db, this.aiVideoGenerator, { logger: this.logger });
     this.facelessStock = new FacelessStockEngine(credentials, {
       logger: this.logger,
@@ -74,6 +79,7 @@ class ProductionManagementAgent {
       const productionData = {
         id: productionId,
         strategy,
+        strategyContext,
         script,
         thumbnail,
         seo,
@@ -110,7 +116,7 @@ class ProductionManagementAgent {
 
       if (await this.shouldUseFacelessStock()) {
         await this.processWithFacelessStock(productionData);
-        await this.applyBackgroundMusic(productionData, musicTrack);
+        await this.applyBackgroundMusic(productionData, musicTrack, strategyContext.musicVolume);
         const dimensions = await this.aiVideoGenerator.formatVideoAspect(productionData.assets.finalVideo.path, aspectRatio);
         productionData.assets.finalVideo.resolution = `${dimensions.width}x${dimensions.height}`;
         productionData.assets.finalVideo.aspectRatio = aspectRatio;
@@ -124,7 +130,7 @@ class ProductionManagementAgent {
 
       if (await this.shouldUseNarrativeStory()) {
         await this.processWithNarrativeStory(productionData);
-        await this.applyBackgroundMusic(productionData, musicTrack);
+        await this.applyBackgroundMusic(productionData, musicTrack, strategyContext.musicVolume);
         const dimensions = await this.aiVideoGenerator.formatVideoAspect(productionData.assets.finalVideo.path, aspectRatio);
         productionData.assets.finalVideo.resolution = `${dimensions.width}x${dimensions.height}`;
         productionData.assets.finalVideo.aspectRatio = aspectRatio;
@@ -141,7 +147,7 @@ class ProductionManagementAgent {
       
       // Generate audio narration
       await this.generateAudioNarration(productionData, strategyContext);
-      await this.applyBackgroundMusic(productionData, musicTrack);
+      await this.applyBackgroundMusic(productionData, musicTrack, strategyContext.musicVolume);
       
       // Generate captions
       await this.generateCaptions(productionData);
@@ -597,11 +603,20 @@ class ProductionManagementAgent {
         provider: options.ttsProvider,
         voiceName: options.voiceName
       });
+      const voiceRateValue = Number(options.voiceRate);
+      const voiceVolumeValue = Number(options.voiceVolume);
+      const voiceRate = Math.max(0.5, Math.min(2, Number.isFinite(voiceRateValue) && voiceRateValue > 0 ? voiceRateValue : 1));
+      const voiceVolume = Math.max(0, Math.min(1.5, Number.isFinite(voiceVolumeValue) ? voiceVolumeValue : 1));
+      let tunedAudioPath = generatedPath;
+      if (voiceRate !== 1 || voiceVolume !== 1) {
+        tunedAudioPath = path.join(__dirname, '..', 'data', 'audio', `${productionData.id}_narration_tuned.mp3`);
+        await runFFmpeg(['-y', '-i', generatedPath, '-af', `atempo=${voiceRate.toFixed(2)},volume=${voiceVolume.toFixed(2)}`, '-c:a', 'libmp3lame', '-q:a', '4', tunedAudioPath]);
+      }
       const evidence = this.aiVideoGenerator.lastNarrationResult || {};
-      const usable = await this.aiVideoGenerator.isUsableAudioFile(generatedPath);
+      const usable = await this.aiVideoGenerator.isUsableAudioFile(tunedAudioPath);
 
       productionData.assets.audio = {
-        path: generatedPath,
+        path: tunedAudioPath,
         duration: productionData.estimatedDuration,
         format: 'mp3',
         generatedWith: 'AI',
@@ -617,12 +632,16 @@ class ProductionManagementAgent {
         intentionalSilence: false
       };
       productionData.voice = { provider: options.ttsProvider || 'auto', voice: options.voiceName || null };
+      productionData.voice.rate = voiceRate;
+      productionData.voice.volume = voiceVolume;
       productionData.subtitleStyle = options.subtitleStyle || 'clean';
       productionData.subtitleOptions = {
         position: ['top', 'center', 'bottom'].includes(options.subtitlePosition) ? options.subtitlePosition : 'bottom',
         color: /^#[0-9a-f]{6}$/i.test(options.subtitleColor || '') ? options.subtitleColor : '#FFFFFF',
         size: Math.max(12, Math.min(40, Number(options.subtitleSize) || 20)),
-        background: options.subtitleBackground === 'true'
+        background: options.subtitleBackground === 'true',
+        outlineColor: /^#[0-9a-f]{6}$/i.test(options.subtitleOutlineColor || '') ? options.subtitleOutlineColor : '#000000',
+        outlineWidth: Math.max(0, Math.min(8, Number(options.subtitleOutlineWidth) || 2))
       };
 
       if (usable) productionData.timeline.audioGenerated = new Date().toISOString();
@@ -633,7 +652,7 @@ class ProductionManagementAgent {
     }
   }
 
-  async applyBackgroundMusic(productionData, trackName) {
+  async applyBackgroundMusic(productionData, trackName, musicVolume = 0.16) {
     if (!trackName) return null;
     const musicRoot = path.resolve(__dirname, '..', 'data', 'music');
     const musicPath = path.resolve(musicRoot, path.basename(String(trackName)));
@@ -641,16 +660,18 @@ class ProductionManagementAgent {
     const source = await fs.stat(musicPath).catch(() => null);
     if (!source?.isFile()) throw new Error(`Background music track was not found: ${trackName}`);
 
+    const musicVolumeValue = Number(musicVolume);
+    const volume = Math.max(0, Math.min(1, Number.isFinite(musicVolumeValue) ? musicVolumeValue : 0.16));
     const narrationPath = productionData.assets.audio?.path;
     if (narrationPath && await this.aiVideoGenerator.isUsableAudioFile(narrationPath)) {
       const mixedAudioPath = path.join(__dirname, '..', 'data', 'audio', `${productionData.id}_mixed.mp3`);
       await runFFmpeg([
         '-y', '-i', narrationPath, '-stream_loop', '-1', '-i', musicPath,
-        '-filter_complex', '[0:a]volume=1[narration];[1:a]volume=0.16[music];[narration][music]amix=inputs=2:duration=first:dropout_transition=2[audio]',
+        '-filter_complex', `[0:a]volume=1[narration];[1:a]volume=${volume.toFixed(2)}[music];[narration][music]amix=inputs=2:duration=first:dropout_transition=2[audio]`,
         '-map', '[audio]', '-c:a', 'libmp3lame', '-q:a', '4', mixedAudioPath
       ]);
       productionData.assets.audio.path = mixedAudioPath;
-      productionData.assets.audio.backgroundMusic = { track: path.basename(musicPath), volume: 0.16 };
+      productionData.assets.audio.backgroundMusic = { track: path.basename(musicPath), volume };
       return mixedAudioPath;
     }
 
@@ -659,13 +680,13 @@ class ProductionManagementAgent {
     const outputPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_music.mp4`);
     await runFFmpeg([
       '-y', '-i', finalVideoPath, '-stream_loop', '-1', '-i', musicPath,
-      '-filter_complex', '[0:a]volume=1[original];[1:a]volume=0.16[music];[original][music]amix=inputs=2:duration=first:dropout_transition=2[audio]',
+      '-filter_complex', `[0:a]volume=1[original];[1:a]volume=${volume.toFixed(2)}[music];[original][music]amix=inputs=2:duration=first:dropout_transition=2[audio]`,
       '-map', '0:v:0', '-map', '[audio]', '-c:v', 'copy', '-c:a', 'aac', '-shortest', outputPath
     ]);
     await fs.rename(outputPath, finalVideoPath);
     productionData.assets.audio = {
       ...(productionData.assets.audio || {}),
-      backgroundMusic: { track: path.basename(musicPath), volume: 0.16 }
+      backgroundMusic: { track: path.basename(musicPath), volume }
     };
     return finalVideoPath;
   }
@@ -675,17 +696,18 @@ class ProductionManagementAgent {
     
     const captionsPath = path.join(__dirname, '..', 'data', 'captions', `${productionData.id}_captions.srt`);
     
-    // Generate SRT captions based on script timing
-    const captions = await this.createSRTCaptions(productionData);
-    
-    await fs.mkdir(path.dirname(captionsPath), { recursive: true });
-    await fs.writeFile(captionsPath, captions);
+    const result = await this.captionService.generate({
+      audioPath: productionData.assets.audio?.path,
+      outputPath: captionsPath,
+      fallback: () => this.createSRTCaptions(productionData)
+    });
     
     productionData.assets.captions = {
       path: captionsPath,
       format: 'srt',
       language: 'en',
-      autoGenerated: true
+      autoGenerated: true,
+      alignment: result.method
     };
     
     productionData.timeline.captionsGenerated = new Date().toISOString();
@@ -801,7 +823,8 @@ class ProductionManagementAgent {
           productionId: productionData.id,
           estimatedDuration: productionData.estimatedDuration,
           fitMode: productionData.strategy?.fitMode || 'cover',
-          transitionMode: productionData.strategy?.transitionMode || 'fade'
+          transitionMode: productionData.strategy?.transitionMode || 'fade',
+          sceneDuration: Number(productionData.strategyContext?.sceneDuration || 0) || undefined
         }
       );
 

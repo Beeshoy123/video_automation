@@ -1,5 +1,6 @@
 const OpenAI = require('openai');
 const Replicate = require('replicate');
+const { createReadStream } = require('fs');
 const fs = require('fs').promises;
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -8,6 +9,7 @@ const sharp = require('sharp');
 const { Logger } = require('./logger');
 const { runFFmpeg, checkFFmpeg, ffmpegInstallHint } = require('./ffmpeg');
 const { MediaGenerationService } = require('./media-generation-service');
+const { VoiceProviderRegistry } = require('./voice-providers');
 
 class AIVideoGenerator {
   constructor(credentials, options = {}) {
@@ -66,6 +68,11 @@ class AIVideoGenerator {
     // Azure Speech configuration
     this.azureSpeechKey = resolvedCredentials.azure?.speechKey || process.env.AZURE_SPEECH_KEY;
     this.azureSpeechRegion = resolvedCredentials.azure?.speechRegion || process.env.AZURE_SPEECH_REGION;
+    this.voiceProviders = new VoiceProviderRegistry({ available: {
+      elevenlabs: Boolean(this.elevenLabsApiKey && this.elevenLabsVoiceId),
+      openai: Boolean(this.openai),
+      gemini: Boolean(this.gemini)
+    } });
     this.mediaGeneration = options.mediaGeneration || (this.db
       ? new MediaGenerationService(this.db, resolvedCredentials, { logger: this.logger })
       : null);
@@ -79,19 +86,24 @@ class AIVideoGenerator {
 
     try {
       let generatedPath;
-      const requestedProvider = String(options.provider || 'auto').toLowerCase();
       const voiceName = String(options.voiceName || '').trim();
-      if ((requestedProvider === 'elevenlabs' || requestedProvider === 'auto') && this.elevenLabsApiKey && (voiceName || this.elevenLabsVoiceId)) {
-        provider = 'elevenlabs';
+      const registry = new VoiceProviderRegistry({ available: {
+        elevenlabs: Boolean(this.elevenLabsApiKey && (voiceName || this.elevenLabsVoiceId)),
+        openai: Boolean(this.openai),
+        gemini: Boolean(this.gemini)
+      } });
+      const selected = registry.select(options.provider || 'auto');
+      if (selected?.id === 'elevenlabs') {
+        provider = selected.id;
         model = this.elevenLabsModel;
         generatedPath = await this.generateElevenLabsTTS(text, outputPath, voiceName || this.elevenLabsVoiceId);
-      } else if ((requestedProvider === 'openai' || requestedProvider === 'auto') && this.openai) {
-        provider = 'openai';
-        model = 'gpt-4o-mini-tts';
+      } else if (selected?.id === 'openai') {
+        provider = selected.id;
+        model = selected.model;
         generatedPath = await this.generateOpenAITTS(text, outputPath, voiceName || 'coral');
-      } else if ((requestedProvider === 'gemini' || requestedProvider === 'auto') && this.gemini) {
-        provider = 'gemini';
-        model = process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
+      } else if (selected?.id === 'gemini') {
+        provider = selected.id;
+        model = selected.model;
         generatedPath = await this.generateGeminiTTS(text, outputPath, voiceName || process.env.GEMINI_TTS_VOICE || 'Kore');
       } else {
         generatedPath = await this.simulateTTSGeneration(text, outputPath);
@@ -119,6 +131,20 @@ class AIVideoGenerator {
       this.logger.error('TTS generation failed:', error);
       throw error;
     }
+  }
+
+  listVoiceProviders() {
+    return this.voiceProviders.list();
+  }
+
+  async transcribeAudioToSrt(audioPath) {
+    if (!this.openai) throw new Error('OpenAI is not configured for speech transcription');
+    const response = await this.openai.audio.transcriptions.create({
+      file: createReadStream(audioPath),
+      model: process.env.OPENAI_TRANSCRIPTION_MODEL || 'whisper-1',
+      response_format: 'srt'
+    });
+    return typeof response === 'string' ? response : response.text || '';
   }
 
   async normalizeNarrationAudio(audioPath) {
@@ -366,7 +392,8 @@ class AIVideoGenerator {
           productionId: options.productionId,
           script,
           visualAssets,
-          outputDir: path.dirname(outputPath)
+          outputDir: path.dirname(outputPath),
+          overrides: options.sceneDuration ? { clipDuration: Math.max(3, Math.min(30, Number(options.sceneDuration))) } : {}
         });
         if (generated.clips.length) {
           const produced = await this.generateHybridVideo(
@@ -893,13 +920,16 @@ class AIVideoGenerator {
     const alignment = { top: 8, center: 5, bottom: 2 }[options.position] || 2;
     const color = /^#[0-9a-f]{6}$/i.test(options.color || '') ? options.color.slice(1).toUpperCase() : 'FFFFFF';
     const assColor = `&H00${color.slice(4, 6)}${color.slice(2, 4)}${color.slice(0, 2)}`;
+    const outline = /^#[0-9a-f]{6}$/i.test(options.outlineColor || '') ? options.outlineColor.slice(1).toUpperCase() : '000000';
+    const assOutline = `&H00${outline.slice(4, 6)}${outline.slice(2, 4)}${outline.slice(0, 2)}`;
     const fontSize = Math.max(12, Math.min(40, Number(options.size) || 20));
+    const outlineWidth = Math.max(0, Math.min(8, Number(options.outlineWidth) || 2));
     const background = options.background === true ? ',BorderStyle=3,BackColour=&H99000000' : '';
     const styles = {
-      clean: `FontName=Arial,FontSize=${fontSize},PrimaryColour=${assColor},OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=${alignment},MarginV=42${background}`,
-      bold: `FontName=Arial,FontSize=${fontSize + 4},Bold=1,PrimaryColour=${assColor},OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=${alignment},MarginV=48${background}`,
-      neon: `FontName=Arial,FontSize=${fontSize + 2},Bold=1,PrimaryColour=${assColor},OutlineColour=&H00341B42,BorderStyle=1,Outline=2,Shadow=0,Alignment=${alignment},MarginV=46${background}`,
-      minimal: `FontName=Arial,FontSize=${Math.max(12, fontSize - 2)},PrimaryColour=${assColor},OutlineColour=&H00000000,BorderStyle=1,Outline=1,Shadow=0,Alignment=${alignment},MarginV=32${background}`
+      clean: `FontName=Arial,FontSize=${fontSize},PrimaryColour=${assColor},OutlineColour=${assOutline},BorderStyle=1,Outline=${outlineWidth},Shadow=0,Alignment=${alignment},MarginV=42${background}`,
+      bold: `FontName=Arial,FontSize=${fontSize + 4},Bold=1,PrimaryColour=${assColor},OutlineColour=${assOutline},BorderStyle=1,Outline=${outlineWidth + 1},Shadow=1,Alignment=${alignment},MarginV=48${background}`,
+      neon: `FontName=Arial,FontSize=${fontSize + 2},Bold=1,PrimaryColour=${assColor},OutlineColour=${assOutline},BorderStyle=1,Outline=${outlineWidth},Shadow=0,Alignment=${alignment},MarginV=46${background}`,
+      minimal: `FontName=Arial,FontSize=${Math.max(12, fontSize - 2)},PrimaryColour=${assColor},OutlineColour=${assOutline},BorderStyle=1,Outline=${Math.max(0, outlineWidth - 1)},Shadow=0,Alignment=${alignment},MarginV=32${background}`
     };
     await runFFmpeg([
       '-y', '-i', videoPath,

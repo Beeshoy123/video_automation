@@ -135,6 +135,7 @@ function renderDashboard() {
 
   renderLiveStageBar(state.jobs, state.pipeline);
   renderReadyState(state.pipeline);
+  renderOnboarding(state);
 
   renderReviews(reviews);
   renderJobs(actionableJobs.length ? actionableJobs : state.jobs.slice(0, 5));
@@ -150,6 +151,48 @@ function renderDashboard() {
   renderOperator(state.channelStrategy, state.operatorRuns || [], { ...state.system, readiness: state.readiness });
   populateSettings(state.profile, state.settings, state.system.videoProviders || []);
 }
+
+function renderOnboarding(state) {
+  const panel = $('#onboarding-panel');
+  if (!panel) return;
+  const dismissed = localStorage.getItem('yaa_onboarding_dismissed') === 'true';
+  const profile = state.profile || {};
+  const settings = state.settings || {};
+  const providers = state.system?.videoProviders || [];
+  const provider = settings.video_provider || 'slideshow';
+  const providerReady = provider === 'slideshow' || provider === 'auto'
+    ? true
+    : Boolean(providers.find(item => item.id === provider)?.available);
+  const milestones = [
+    { id: 'channel', title: 'Define your channel', detail: profile.channel_name ? `${profile.channel_name} is configured.` : 'Add your channel name, audience, and voice.', complete: Boolean(profile.channel_name && profile.target_audience), action: 'settings', actionLabel: 'Open setup' },
+    { id: 'provider', title: 'Choose a production engine', detail: providerReady ? `${label(provider)} is ready for generation.` : 'Choose a local fallback or configure a video provider.', complete: providerReady, action: 'settings', actionLabel: 'Review providers' },
+    { id: 'readiness', title: 'Verify the pipeline', detail: state.readiness?.status === 'passed' ? 'Your latest readiness check passed.' : 'Run a dry check before spending time or provider credits.', complete: state.readiness?.status === 'passed', action: 'readiness', actionLabel: 'Run pipeline check' },
+    { id: 'first-video', title: 'Create your first video', detail: state.pipeline?.length ? `${state.pipeline.length} production${state.pipeline.length === 1 ? '' : 's'} in the workspace.` : 'Start with an idea or use a quick-start template.', complete: Boolean(state.pipeline?.length), action: 'generate', actionLabel: 'Generate video' }
+  ];
+  const completed = milestones.filter(item => item.complete).length;
+  if (dismissed || completed === milestones.length) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+  panel.innerHTML = `<div class="onboarding-heading"><div><p class="eyebrow">FIRST-RUN PATH</p><h2 id="onboarding-title">Get from setup to your first publishable video</h2><p>Complete the essentials in order. Review and approval gates remain in place.</p></div><button type="button" class="close-button" data-dismiss-onboarding aria-label="Dismiss onboarding">×</button></div><div class="onboarding-progress"><span>${completed} of ${milestones.length} complete</span><div><i style="width:${(completed / milestones.length) * 100}%"></i></div></div><div class="onboarding-steps">${milestones.map((item, index) => `<article class="onboarding-step ${item.complete ? 'complete' : ''}"><span class="onboarding-step-number">${item.complete ? '✓' : index + 1}</span><div><strong>${escapeHTML(item.title)}</strong><p>${escapeHTML(item.detail)}</p></div>${item.complete ? '<span class="onboarding-done">Done</span>' : `<button type="button" class="text-button" data-onboarding-action="${item.action}">${escapeHTML(item.actionLabel)} →</button>`}</article>`).join('')}</div>`;
+}
+
+document.addEventListener('click', event => {
+  if (event.target.closest('[data-dismiss-onboarding]')) {
+    localStorage.setItem('yaa_onboarding_dismissed', 'true');
+    $('#onboarding-panel')?.classList.add('hidden');
+    return;
+  }
+  const action = event.target.closest('[data-onboarding-action]')?.dataset.onboardingAction;
+  if (!action) return;
+  if (action === 'generate') {
+    if (ui.state?.system?.setupRequired) return showToast('Finish setup before generating a video.', 'error');
+    openGenerateDialog();
+  } else {
+    switchView(action);
+  }
+});
 
 function activeCampaign() {
   return (ui.state?.campaignCatalog?.campaigns || []).find(campaign => campaign.id === ui.state?.campaignCatalog?.activeCampaignId) || ui.state?.campaignIntake?.campaign || {};
@@ -668,7 +711,45 @@ function populateSettings(profile = {}, settings = {}, providers = []) {
     ? `${providers.filter(provider => provider.available && provider.id !== 'slideshow').length} paid provider(s) available; local slideshow remains the final fallback.`
     : videoMapping.videoProvider === 'slideshow' ? 'Local FFmpeg slideshow is selected; no external video credentials are required.'
       : selected?.available ? `${label(selected.id)} is configured (${selected.model}).` : `${label(videoMapping.videoProvider)} credentials are not configured.`;
+  renderProviderGuidance(providers, videoMapping.videoProvider);
 }
+
+const providerDocs = {
+  seedance: 'https://replicate.com/bytedance/seedance-2.5',
+  minimax_h3: 'https://www.minimaxi.com/',
+  google_omni: 'https://ai.google.dev/',
+  kling: 'https://klingai.com/',
+  wan: 'https://replicate.com/collections/wan',
+  slideshow: ''
+};
+
+function renderProviderGuidance(providers = [], selectedId = 'slideshow') {
+  const container = $('#video-provider-guidance');
+  if (!container) return;
+  const entries = providers.length ? providers : [{ id: 'slideshow', model: 'local-ffmpeg', available: true, capabilities: {} }];
+  container.innerHTML = `<div class="provider-guidance-heading"><div><p class="eyebrow">CHOOSE YOUR ENGINE</p><strong>Match the provider to the job</strong></div><span class="provider-guidance-note">Cards reflect the current local configuration.</span></div><div class="provider-card-grid">${entries.map(provider => {
+    const capabilities = provider.capabilities || {};
+    const isLocal = provider.id === 'slideshow';
+    const available = isLocal || provider.available;
+    const duration = capabilities.minDuration && capabilities.maxDuration ? `${capabilities.minDuration}-${capabilities.maxDuration}s clips` : 'Variable clip length';
+    const resolution = capabilities.defaultResolution ? `${capabilities.defaultResolution} default` : 'Local output';
+    const features = [capabilities.firstFrame ? 'First frame' : null, capabilities.nativeAudio ? 'Native audio' : null, capabilities.referenceImages ? `${capabilities.referenceImages} refs` : null].filter(Boolean).slice(0, 3);
+    return `<article class="provider-card ${provider.id === selectedId ? 'selected' : ''} ${available ? 'available' : 'unavailable'}" data-provider-card="${escapeHTML(provider.id)}"><div class="provider-card-top"><strong>${escapeHTML(isLocal ? 'Local slideshow' : label(provider.id))}</strong><span class="provider-state">${isLocal ? 'LOCAL' : available ? 'READY' : 'NOT CONFIGURED'}</span></div><span class="provider-model">${escapeHTML(provider.model || 'Automatic routing')}</span><div class="provider-facts"><span>${escapeHTML(duration)}</span><span>${escapeHTML(resolution)}</span>${features.map(feature => `<span>${escapeHTML(feature)}</span>`).join('')}</div><div class="provider-card-actions"><button type="button" class="text-button" data-provider-select="${escapeHTML(provider.id)}">${provider.id === selectedId ? 'Selected' : 'Use this'}</button>${providerDocs[provider.id] ? `<a href="${providerDocs[provider.id]}" target="_blank" rel="noopener">Docs ↗</a>` : '<span>FFmpeg fallback</span>'}</div></article>`;
+  }).join('')}</div>`;
+}
+
+document.addEventListener('click', event => {
+  const button = event.target.closest('[data-provider-select]');
+  if (!button) return;
+  const select = $('#profile-form [name="videoProvider"]');
+  if (!select) return;
+  select.value = button.dataset.providerSelect;
+  renderProviderGuidance(ui.state?.system?.videoProviders || [], select.value);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+});
+$('#profile-form [name="videoProvider"]')?.addEventListener('change', event => {
+  renderProviderGuidance(ui.state?.system?.videoProviders || [], event.currentTarget.value);
+});
 
 function switchView(view) {
   ui.currentView = view;
@@ -763,6 +844,11 @@ function renderSceneEditor(item, canReview = true) {
         : '<button type="button" class="button secondary small" data-intentional-silence>Use intentional silence</button>' : ''}
     </div>
     <div class="scene-summary"><strong>${scenes.length} scenes</strong><span>${Math.round(scenes.reduce((sum, scene) => sum + Number(scene.duration || 0), 0))}s timeline</span><span>${scenes.filter(scene => scene.status !== 'ready').length} pending repairs</span></div>
+    <div class="scene-nav">
+      <button type="button" class="button secondary small" data-scene-nav="prev" ${scenes.length <= 1 ? 'disabled' : ''}>← Previous</button>
+      <span class="scene-nav-counter">Scene 1 / ${scenes.length}</span>
+      <button type="button" class="button primary small" data-scene-nav="next" ${scenes.length <= 1 ? 'disabled' : ''}>Next scene →</button>
+    </div>
     <div class="scene-list">
       ${scenes.map((scene, index) => {
         const disabled = !canReview || scene.locked;
@@ -772,7 +858,7 @@ function renderSceneEditor(item, canReview = true) {
             ? `<video controls preload="metadata"><source src="${escapeHTML(scene.assetUrl)}"></video>`
             : `<img src="${escapeHTML(scene.assetUrl)}" alt="${escapeHTML(scene.label)} scene asset">`
           : '<div class="preview-placeholder">No scene asset</div>';
-        return `<article class="scene-card ${scene.locked ? 'locked' : ''}" data-scene-card="${escapeHTML(scene.id)}">
+        return `<article class="scene-card ${index === 0 ? 'is-active' : 'hidden'} ${scene.locked ? 'locked' : ''}" data-scene-card="${escapeHTML(scene.id)}" data-scene-index="${index}">
           <div class="scene-card-top">
             <div class="scene-preview">${preview}<span class="scene-number">${index + 1}</span></div>
             <div class="scene-identity">
@@ -860,10 +946,27 @@ function setupPreviewPlayer() {
     if (progressBar) progressBar.style.width = `${Math.max(0, Math.min(100, progress))}%`;
     const current = document.querySelector('[data-preview-current-time]');
     const total = document.querySelector('[data-preview-duration]');
-    const playButton = document.querySelector('[data-preview-play]');
+    const playButtons = document.querySelectorAll('[data-preview-play]');
     if (current) current.textContent = formatTime(player.currentTime);
     if (total) total.textContent = formatTime(duration);
-    if (playButton) playButton.textContent = player.paused ? 'Play' : 'Pause';
+
+    playButtons.forEach((button) => {
+      const isOverlay = button.classList.contains('preview-play-overlay');
+      const icon = isOverlay ? button.querySelector('.play-toggle-icon') : button;
+      const isPaused = player.paused;
+      button.setAttribute('aria-label', isPaused ? 'Play video' : 'Pause video');
+      button.classList.toggle('is-paused', !isPaused);
+      if (isOverlay) {
+        button.classList.toggle('is-paused', isPaused);
+        if (icon) {
+          icon.textContent = isPaused ? '▶' : '❚❚';
+          icon.style.transform = isPaused ? 'translateX(2px)' : 'none';
+        }
+        return;
+      }
+      button.textContent = isPaused ? '▶' : '❚❚';
+      button.title = isPaused ? 'Play video' : 'Pause video';
+    });
   };
   player.addEventListener('loadedmetadata', update);
   player.addEventListener('timeupdate', update);
@@ -912,13 +1015,12 @@ async function openContent(productionId) {
       <div class="dialog-heading"><div><p class="eyebrow">CONTENT REVIEW</p><h2>${escapeHTML(title)}</h2><div class="meta-line">${statusChip(item.schedule?.status || item.review_status || item.status)} · Quality ${qualityScore(item.qualityChecks)}%</div></div><button type="button" class="close-button" data-close>×</button></div>
       <form id="content-review-form" class="editor content-review-editor">
         <div class="content-layout">
-          <div>
+          <div class="review-primary-column">
             <div class="production-preview-workspace">
               <div class="preview-media-panel">
                 <div class="preview-header">
-                  <div>
-                    <p class="eyebrow">PRODUCTION PREVIEW WORKSPACE</p>
-                    <h3>${escapeHTML(title)}</h3>
+                  <div class="preview-header-copy">
+                    <p class="eyebrow">PRODUCTION PREVIEW</p>
                   </div>
                   <div class="preview-actions">
                     <button type="button" class="button secondary small preview-action-icon" data-preview-toggle-captions aria-label="Toggle captions" aria-pressed="true" title="Toggle captions">CC</button>
@@ -931,14 +1033,17 @@ async function openContent(productionId) {
                     : previewPoster
                       ? `<img src="${previewPoster}" alt="Generated thumbnail">`
                       : '<div class="preview-placeholder">No playable preview was produced.</div>'}
-                  ${previewVideo ? '<button type="button" class="preview-play-overlay" data-preview-play aria-label="Play video">▶</button>' : ''}
-                  <div class="preview-scene-badge">Current scene: <strong>${escapeHTML(currentScene.label || 'Opening scene')}</strong></div>
+                  ${previewVideo ? '<button type="button" class="preview-play-overlay" data-preview-play aria-label="Play video"><span class="play-toggle-icon" aria-hidden="true">▶</span></button>' : ''}
+                  <div class="preview-scene-badge">Scene <strong>${escapeHTML(String(1))}</strong></div>
+                </div>
+                <div class="preview-player-meta">
+                  <span class="current-scene-pill">${escapeHTML(currentScene.label || 'Opening scene')}</span>
+                  <span class="preview-time"><strong data-preview-current-time>0:00</strong> / <span data-preview-duration>0:00</span></span>
                 </div>
                 ${previewVideo ? `<div class="preview-controls" aria-label="Video controls">
                   <button type="button" class="player-control player-play" data-preview-play aria-label="Play video">▶</button>
                   <button type="button" class="player-control" data-preview-skip="-10" aria-label="Skip back 10 seconds">-10s</button>
                   <button type="button" class="player-control" data-preview-skip="10" aria-label="Skip forward 10 seconds">+10s</button>
-                  <span class="preview-time"><strong data-preview-current-time>0:00</strong> / <span data-preview-duration>0:00</span></span>
                   <input class="preview-volume" data-preview-volume type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">
                   <select class="preview-speed" data-preview-speed aria-label="Playback speed"><option value="0.75">0.75x</option><option value="1" selected>1x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option><option value="2">2x</option></select>
                   <button type="button" class="player-control preview-fullscreen" data-preview-fullscreen aria-label="Enter fullscreen" title="Fullscreen">⛶</button>
@@ -949,13 +1054,21 @@ async function openContent(productionId) {
                 </div>
               </div>
             </div>
+            <section class="preview-packaging editor">
+              <div class="preview-packaging-heading">
+                <div><p class="eyebrow">VIDEO PACKAGING</p><h3>${escapeHTML(title)}</h3></div>
+                <span class="preview-packaging-note">Edit before publishing</span>
+              </div>
+              <div class="review-sidebar-grid">
+                <label class="review-title-field"><span>Title</span><input name="title" maxlength="100" value="${escapeHTML(title)}" required></label>
+                <label class="review-description-field"><span>Description</span><textarea name="description" rows="5">${escapeHTML(description)}</textarea></label>
+                <label class="review-tag-field"><span>Tags</span><input name="tags" value="${escapeHTML(tags.join(', '))}"></label>
+              </div>
+            </section>
             <div class="quality-grid">${(item.qualityChecks || []).map(check => `<div class="quality-check ${check.passed ? 'pass' : 'fail'}">${check.passed ? '✓' : '×'} ${escapeHTML(check.message)}</div>`).join('') || '<div class="quality-check">No quality results recorded.</div>'}</div>
             ${item.review_notes ? `<p class="callout">${escapeHTML(item.review_notes)}</p>` : ''}
           </div>
-          <div class="editor">
-            <label><span>Title</span><input name="title" maxlength="100" value="${escapeHTML(title)}" required></label>
-            <label><span>Description</span><textarea name="description" rows="7">${escapeHTML(description)}</textarea></label>
-            <label><span>Tags</span><input name="tags" value="${escapeHTML(tags.join(', '))}"></label>
+          <div class="review-sidebar editor">
             ${experiment ? `<section class="experiment-panel">
               <div><p class="eyebrow">APPROVED LEARNING EXPERIMENT</p><strong>${escapeHTML(experiment.hypothesis)}</strong><p>Choose the packaging to ship. Nothing changes on YouTube until this content is approved and published.</p></div>
               <label><span>Title variant</span><select name="selectedTitleVariant">${experiment.titleVariants.map((variant, index) => `<option value="${index}" data-title="${escapeHTML(variant.title)}" ${index === selectedTitleVariant ? 'selected' : ''}>${escapeHTML(variant.label)} — ${escapeHTML(variant.title)}</option>`).join('')}</select></label>
@@ -1412,6 +1525,21 @@ document.addEventListener('click', async event => {
     return;
   }
 
+  const sceneNav = event.target.closest('[data-scene-nav]');
+  if (sceneNav) {
+    const cards = $$('[data-scene-card]');
+    if (!cards.length) return;
+    const activeCard = cards.find(card => !card.classList.contains('hidden')) || cards[0];
+    const currentIndex = cards.indexOf(activeCard);
+    const nextIndex = sceneNav.dataset.sceneNav === 'next'
+      ? Math.min(currentIndex + 1, cards.length - 1)
+      : Math.max(currentIndex - 1, 0);
+    cards.forEach((card, index) => card.classList.toggle('hidden', index !== nextIndex));
+    const counter = event.target.closest('.scene-repair-panel')?.querySelector('.scene-nav-counter');
+    if (counter) counter.textContent = `Scene ${nextIndex + 1} / ${cards.length}`;
+    return;
+  }
+
   const sceneButton = event.target.closest('[data-scene-save], [data-scene-narration], [data-scene-regenerate], [data-scene-lock], [data-scene-move]');
   if (sceneButton) {
     const card = sceneButton.closest('[data-scene-card]');
@@ -1627,6 +1755,13 @@ async function loadVoiceOptions() {
     const response = await api('/api/voices');
     const voices = response.voices?.[provider.value] || response.voices?.auto || [];
     list.innerHTML = voices.map(voice => `<option value="${escapeHTML(voice)}"></option>`).join('');
+    const providerHelp = $('#voice-provider-help');
+    if (providerHelp && Array.isArray(response.providers)) {
+      const ready = response.providers.filter(item => item.available).map(item => item.label || item.id);
+      providerHelp.textContent = ready.length
+        ? `Ready: ${ready.join(', ')} · Auto uses the first available provider.`
+        : 'No live voice provider is configured; publishing remains blocked until narration is real.';
+    }
   } catch (_error) { list.innerHTML = ''; }
 }
 async function loadMediaAssets() {
@@ -2038,6 +2173,60 @@ function renderNicheFinderResults(result) {
     ${signals.length ? `<div class="niche-signals"><h3>Recent videos in this space</h3>${signals.slice(0, 5).map(signal => `<a class="niche-signal" href="${escapeHTML(signal.url)}" target="_blank" rel="noopener"><span><strong>${escapeHTML(signal.title)}</strong><small>${escapeHTML(signal.channel)} · ${Number(signal.viewCount || 0).toLocaleString()} views</small></span><span aria-hidden="true">↗</span></a>`).join('')}</div>` : '<p class="niche-empty">No live videos were returned. You can still use the suggested angles as an evergreen starting point.</p>'}`;
 }
 
+function parseBatchManifest(text, fileName = '') {
+  const source = String(text || '').replace(/^\uFEFF/, '').trim();
+  if (!source) return { topics: [], errors: ['The manifest is empty.'] };
+  const errors = [];
+  let records;
+  try {
+    const parsed = JSON.parse(source);
+    records = Array.isArray(parsed) ? parsed : Array.isArray(parsed.topics) ? parsed.topics : [parsed];
+  } catch (_error) {
+    const lines = source.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    if (/\.csv$/i.test(fileName) || (lines[0] && /^topic\s*(,|$)/i.test(lines[0]))) {
+      records = lines.slice(/^topic\s*(,|$)/i.test(lines[0]) ? 1 : 0).map(line => line.split(',')[0].replace(/^"|"$/g, '').trim());
+    } else {
+      records = lines.map(line => {
+        try {
+          const parsed = JSON.parse(line);
+          return parsed && typeof parsed === 'object' ? parsed.topic : parsed;
+        } catch (_lineError) {
+          return line;
+        }
+      });
+    }
+  }
+  const topics = [];
+  records.forEach((record, index) => {
+    const topic = typeof record === 'string' ? record.trim() : String(record?.topic || '').trim();
+    if (!topic) errors.push(`Row ${index + 1} has no topic.`);
+    else if (topic.length > 200) errors.push(`Row ${index + 1} exceeds the 200-character topic limit.`);
+    else topics.push(topic);
+  });
+  if (topics.length > 100) errors.push(`The manifest contains ${topics.length} topics; the maximum is 100.`);
+  return { topics, errors };
+}
+
+function updateBatchManifestStatus(topics = [], errors = [], source = '') {
+  const status = $('#batch-manifest-status');
+  if (!status) return;
+  status.className = `batch-manifest-status ${errors.length ? 'has-errors' : topics.length ? 'ready' : ''}`;
+  status.innerHTML = errors.length
+    ? `<strong>Manifest needs attention</strong><span>${escapeHTML(errors.slice(0, 2).join(' '))}</span>`
+    : topics.length
+      ? `<strong>${topics.length} topic${topics.length === 1 ? '' : 's'} ready</strong><span>${escapeHTML(source || 'Imported manifest')} · validation passed</span>`
+      : 'No batch manifest imported.';
+}
+
+$('#batch-manifest-file')?.addEventListener('change', async event => {
+  const file = event.currentTarget.files?.[0];
+  if (!file) return;
+  const result = parseBatchManifest(await file.text(), file.name);
+  const textarea = $('#generate-form [name="batchTopics"]');
+  if (textarea) textarea.value = result.topics.join('\n');
+  updateBatchManifestStatus(result.topics, result.errors, file.name);
+});
+
 $('#strategy-form').addEventListener('submit', async event => {
   event.preventDefault();
   await mutate('/api/operator/strategy', 'PUT', strategyFormData(), 'Channel strategy saved.').catch(() => {});
@@ -2080,20 +2269,28 @@ $('#generate-form').addEventListener('submit', async event => {
     storyType: values.storyType,
     imageStyle: values.imageStyle,
     musicTrack: values.musicTrack,
+    musicVolume: values.musicVolume,
     ttsProvider: values.ttsProvider,
     voiceName: values.voiceName,
+    voiceRate: values.voiceRate,
+    voiceVolume: values.voiceVolume,
+    sceneDuration: values.sceneDuration,
     subtitleStyle: values.subtitleStyle,
     aspectRatio: values.aspectRatio,
     subtitlePosition: values.subtitlePosition,
     subtitleSize: values.subtitleSize,
     subtitleColor: values.subtitleColor,
     subtitleBackground: values.subtitleBackground,
+    subtitleOutlineColor: values.subtitleOutlineColor,
+    subtitleOutlineWidth: values.subtitleOutlineWidth,
     mediaAssets: values.mediaAssets
     ,fitMode: values.fitMode
     ,transitionMode: values.transitionMode
   };
+  const topics = values.batchTopics.split(/\r?\n/).map(topic => topic.trim()).filter(Boolean);
+  if (topics.length > 100) return showToast('A batch can contain at most 100 topics.', 'error');
+  if (topics.some(topic => topic.length > 200)) return showToast('Each batch topic must be 200 characters or less.', 'error');
   try {
-    const topics = values.batchTopics.split(/\r?\n/).map(topic => topic.trim()).filter(Boolean);
     const strategyContext = { ...cartoonContext, ...narrativeContext, mode: 'standard' };
     if (topics.length > 1) {
       await mutate('/generate/batch', 'POST', { ...values, topics, strategyContext }, `${topics.length} generation jobs queued.`);

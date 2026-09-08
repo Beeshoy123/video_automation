@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const express = require('express');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs').promises;
 const { Logger } = require('./utils/logger');
@@ -24,6 +25,9 @@ const { ProvenanceService } = require('./utils/provenance-service');
 const { SceneRepairService } = require('./utils/scene-repair-service');
 const { ShortsRepurposingService } = require('./utils/shorts-repurposing-service');
 const { CampaignIntakeService } = require('./utils/campaign-intake-service');
+const { TaskManager } = require('./utils/task-manager');
+const { VoiceProviderRegistry } = require('./utils/voice-providers');
+const { SETTING_KEYS, migrateConfig, buildConfig } = require('./utils/config-schema');
 const musicLibrary = require('./utils/music-library');
 const mediaLibrary = require('./utils/media-library');
 const { version } = require('./package.json');
@@ -38,6 +42,10 @@ class YouTubeAutomationAgent {
     this.app = express();
     this.isInitialized = false;
     this.activeJobs = new Map();
+    this.generationTasks = new TaskManager({
+      maxConcurrent: process.env.MAX_CONCURRENT_JOBS || 1,
+      maxQueued: process.env.MAX_QUEUED_JOBS || 100
+    });
     this.campaignJobs = new Map();
     this.operator = null;
     this.autonomous = null;
@@ -275,7 +283,7 @@ class YouTubeAutomationAgent {
       if (typeof body.strategyContext !== 'object' || Array.isArray(body.strategyContext)) {
         return { valid: false, status: 400, error: 'strategyContext must be an object' };
       }
-      const limits = { angle: 500, rationale: 1000, audience: 500, objective: 1000, valueProposition: 1000, constraints: 2000, character: 300, visualStyle: 200, sceneCount: 2, voiceDirection: 300, storyType: 40, imageStyle: 40, musicTrack: 160, ttsProvider: 20, voiceName: 40, subtitleStyle: 20, aspectRatio: 5, subtitlePosition: 10, subtitleColor: 7, subtitleSize: 2, subtitleBackground: 5, mediaAssets: 2000, fitMode: 10, transitionMode: 10 };
+      const limits = { angle: 500, rationale: 1000, audience: 500, objective: 1000, valueProposition: 1000, constraints: 2000, character: 300, visualStyle: 200, sceneCount: 2, sceneDuration: 2, voiceDirection: 300, storyType: 40, imageStyle: 40, musicTrack: 160, musicVolume: 5, ttsProvider: 20, voiceName: 40, voiceRate: 5, voiceVolume: 5, subtitleStyle: 20, aspectRatio: 5, subtitlePosition: 10, subtitleColor: 7, subtitleSize: 2, subtitleBackground: 5, subtitleOutlineColor: 7, subtitleOutlineWidth: 4, mediaAssets: 2000, fitMode: 10, transitionMode: 10 };
       value.strategyContext = {};
       for (const [key, max] of Object.entries(limits)) {
         if (body.strategyContext[key] === undefined || body.strategyContext[key] === null) continue;
@@ -342,6 +350,20 @@ class YouTubeAutomationAgent {
   }
   setupAPI() {
     this.app.use(express.json({ limit: '1mb' }));
+    this.app.use((req, res, next) => {
+      const requestId = String(req.get('X-Request-Id') || crypto.randomUUID()).slice(0, 120);
+      req.requestId = requestId;
+      res.setHeader('X-Request-Id', requestId);
+      const json = res.json.bind(res);
+      res.json = body => {
+        if (res.statusCode >= 400 && body && typeof body === 'object' && !Array.isArray(body)) {
+          return json({ ...body, requestId });
+        }
+        return json(body);
+      };
+      next();
+    });
+    this.app.use('/assets', express.static(path.join(__dirname, 'assets')));
     this.app.use(express.static(path.join(__dirname, 'dashboard')));
 
     if (!process.env.API_KEY) {
@@ -365,6 +387,34 @@ class YouTubeAutomationAgent {
       });
     });
 
+    this.app.get('/api/openapi.json', (_req, res) => {
+      res.json({
+        openapi: '3.0.3',
+        info: { title: 'Video Automation Studio API', version: '2.8.0', description: 'Generate, monitor, review, and publish videos.' },
+        servers: [{ url: '/' }],
+        security: [{ apiKey: [] }],
+        components: {
+          securitySchemes: { apiKey: { type: 'apiKey', in: 'header', name: 'x-api-key' } },
+          schemas: {
+            GenerateRequest: { type: 'object', required: ['length'], properties: { topic: { type: 'string' }, style: { type: 'string' }, length: { type: 'string', enum: ['short', 'medium', 'long'] }, strategyContext: { type: 'object' } } },
+            BatchRequest: { type: 'object', required: ['topics', 'length'], properties: { topics: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string', maxLength: 200 } }, length: { type: 'string', enum: ['short', 'medium', 'long'] }, strategyContext: { type: 'object' } } },
+            Error: { type: 'object', required: ['requestId'], properties: { success: { type: 'boolean' }, error: { type: 'string' }, code: { type: 'string' }, requestId: { type: 'string' } } }
+          }
+        },
+        paths: {
+          '/generate': { post: { summary: 'Queue one video', requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/GenerateRequest' } } } }, responses: { 202: { description: 'Generation job queued' }, 400: { description: 'Invalid request' } } } },
+          '/generate/batch': { post: { summary: 'Queue up to 100 videos', requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/BatchRequest' } } } }, responses: { 202: { description: 'Batch queued' }, 400: { description: 'Invalid request' } } } },
+          '/api/jobs/{jobId}': { get: { summary: 'Read job progress', parameters: [{ name: 'jobId', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Job status' }, 404: { description: 'Job not found', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } } } } },
+          '/health': { get: { summary: 'Read service health', security: [], responses: { 200: { description: 'Health status' } } } },
+          '/api/dashboard': { get: { summary: 'Read dashboard state', responses: { 200: { description: 'Dashboard state' }, 401: { description: 'Unauthorized', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } } } } },
+          '/api/voices': { get: { summary: 'List voice catalogs and provider readiness', responses: { 200: { description: 'Voice catalogs' } } } },
+          '/api/settings': { put: { summary: 'Update channel generation settings', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object' } } } }, responses: { 200: { description: 'Settings saved' }, 400: { description: 'Invalid settings', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } } } } },
+          '/api/config/export': { get: { summary: 'Export portable configuration without secrets', responses: { 200: { description: 'Versioned configuration' } } } },
+          '/api/config/import': { post: { summary: 'Import versioned configuration', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['schemaVersion', 'profile'] } } } }, responses: { 200: { description: 'Configuration imported' }, 400: { description: 'Unsupported or invalid configuration', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } } } } }
+        }
+      });
+    });
+
     this.app.get('/api/music', async (_req, res) => {
       try {
         const tracks = await musicLibrary.listTracks();
@@ -375,12 +425,15 @@ class YouTubeAutomationAgent {
     });
 
     this.app.get('/api/voices', (_req, res) => {
-      res.json({ success: true, voices: {
+      const voices = {
         auto: [],
         openai: ['alloy', 'ash', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'],
         gemini: ['Kore', 'Zephyr', 'Puck', 'Charon', 'Fenrir', 'Leda', 'Aoede', 'Sulafat'],
         elevenlabs: []
-      } });
+      };
+      const providers = this.agents.production?.aiVideoGenerator?.listVoiceProviders?.()
+        || new VoiceProviderRegistry().list();
+      res.json({ success: true, voices, providers });
     });
 
     this.app.post('/api/voice-preview', this.requireAPIKey(), async (req, res) => {
@@ -442,7 +495,7 @@ class YouTubeAutomationAgent {
         }
 
         const { topic, style, length, strategyContext } = validation.value;
-        const result = await this.startGenerationJob({ topic, style, length, strategyContext, source: 'manual' });
+        const result = await this.startGenerationJob({ topic, style, length, strategyContext, source: 'manual', idempotencyKey: req.get('Idempotency-Key') || req.body?.idempotencyKey });
         res.status(202).json({ success: true, result });
       } catch (error) {
         res.status(error.status || 500).json({ success: false, error: error.message });
@@ -454,8 +507,8 @@ class YouTubeAutomationAgent {
         const topics = Array.isArray(req.body?.topics)
           ? req.body.topics.map(topic => String(topic || '').trim()).filter(Boolean)
           : [];
-        if (!topics.length || topics.length > 20) {
-          return res.status(400).json({ success: false, error: 'topics must contain between 1 and 20 items' });
+        if (!topics.length || topics.length > 100) {
+          return res.status(400).json({ success: false, error: 'topics must contain between 1 and 100 items' });
         }
         const base = { ...req.body, topic: topics[0] };
         const validation = this.validateGenerateRequestBody(base);
@@ -656,7 +709,8 @@ class YouTubeAutomationAgent {
             initialized: this.isInitialized,
             setupRequired: this.setupRequired,
             uptime: process.uptime(),
-            activeJobs: this.activeJobs.size,
+            activeJobs: this.generationTasks.activeCount,
+            queuedJobs: this.generationTasks.queuedCount,
             automationPaused: this.scheduler ? !this.scheduler.isEnabled : true,
             agents: Object.keys(this.agents),
             autonomousRunning: Boolean(await this.db.getActiveOperatorRun()),
@@ -1261,23 +1315,13 @@ class YouTubeAutomationAgent {
     this.app.get('/api/config/export', protect, async (_req, res) => {
       const profile = await this.db.getChannelProfile() || {};
       const settings = await this.db.getAllSettings();
-      const exportedAt = new Date().toISOString();
-      res.json({
-        schemaVersion: 1,
-        exportedAt,
-        product: 'Video Automation Studio',
-        profile,
-        settings,
-        secretsExcluded: true
-      });
+      res.json(buildConfig(profile, settings));
     });
 
     this.app.post('/api/config/import', protect, async (req, res) => {
       try {
-        if (!req.body || req.body.schemaVersion !== 1 || typeof req.body.profile !== 'object') {
-          return res.status(400).json({ success: false, error: 'Unsupported configuration file' });
-        }
-        const source = req.body.profile;
+        const migrated = migrateConfig(req.body);
+        const source = migrated.profile;
         const profile = this.validateProfile({
           channelName: source.channelName || source.channel_name,
           goal: source.goal,
@@ -1290,12 +1334,11 @@ class YouTubeAutomationAgent {
           bannedTopics: source.bannedTopics || source.banned_topics
         });
         await this.db.saveChannelProfile(profile);
-        const settings = req.body.settings && typeof req.body.settings === 'object' ? req.body.settings : {};
+        const settings = migrated.settings;
         if (settings.video_provider !== undefined && !['slideshow', 'auto', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan'].includes(settings.video_provider)) throw new Error('Unsupported video provider');
         if (settings.video_engine !== undefined && !['standard', 'faceless_stock', 'narrative_story'].includes(settings.video_engine)) throw new Error('Unsupported video engine');
         if (settings.video_generation_mode !== undefined && !['hybrid', 'slideshow'].includes(settings.video_generation_mode)) throw new Error('Unsupported video generation mode');
-        const allowed = ['approval_required', 'notification_enabled', 'channel_timezone', 'max_daily_posts', 'content_buffer_days', 'video_provider', 'video_engine', 'video_generation_mode', 'video_clip_duration', 'video_max_generated_seconds'];
-        for (const key of allowed) {
+        for (const key of SETTING_KEYS) {
           if (settings[key] !== undefined) await this.db.setSetting(key, String(settings[key]));
         }
         return res.json({ success: true, result: { profile, settings: await this.db.getAllSettings(), secretsExcluded: true } });
@@ -1393,13 +1436,6 @@ class YouTubeAutomationAgent {
     if (['scheduler', 'autonomous_operator'].includes(input.source)) {
       await this.readiness?.assertReady('Automated generation');
     }
-    const maxConcurrent = Math.max(1, parseInt(process.env.MAX_CONCURRENT_JOBS || '1', 10));
-    if (this.activeJobs.size >= maxConcurrent) {
-      const error = new Error(`Generation is busy (${this.activeJobs.size}/${maxConcurrent} active jobs). Try again when the current job finishes.`);
-      error.status = 429;
-      throw error;
-    }
-
     const validation = this.validateGenerateRequestBody(input);
     if (!validation.valid) {
       const error = new Error(validation.error);
@@ -1407,12 +1443,24 @@ class YouTubeAutomationAgent {
       throw error;
     }
 
+    const idempotencyKey = String(input.idempotencyKey || '').trim().slice(0, 200) || null;
+    if (idempotencyKey) {
+      const existing = await this.db.findGenerationJobByIdempotencyKey(idempotencyKey);
+      if (existing) return existing;
+    }
+    if (!this.generationTasks.canAccept()) {
+      const error = new Error(`Generation queue is full (${this.generationTasks.maxQueued} waiting jobs). Try again later.`);
+      error.status = 429;
+      throw error;
+    }
+
     const job = await this.db.createGenerationJob({
       ...validation.value,
-      source: input.source || 'manual'
+      source: input.source || 'manual',
+      idempotencyKey
     });
 
-    const work = this.runGenerationJob(job.id, validation.value)
+    const work = this.generationTasks.submit(job.id, () => this.runGenerationJob(job.id, validation.value))
       .catch(error => this.logger.error(`Generation job ${job.id} failed:`, error))
       .finally(() => this.activeJobs.delete(job.id));
     this.activeJobs.set(job.id, work);
@@ -1460,7 +1508,7 @@ class YouTubeAutomationAgent {
       throw error;
     }
     const maxConcurrent = Math.max(1, parseInt(process.env.MAX_CONCURRENT_JOBS || '1', 10));
-    if (this.activeJobs.size >= maxConcurrent) {
+    if (!this.generationTasks.canAccept()) {
       const error = new Error(`Generation is busy (${this.activeJobs.size}/${maxConcurrent} active jobs). Try again when the current job finishes.`);
       error.status = 429;
       throw error;
@@ -1495,7 +1543,7 @@ class YouTubeAutomationAgent {
         failedStage: null
       }
     });
-    const work = this.runGenerationJob(job.id, input)
+    const work = this.generationTasks.submit(job.id, () => this.runGenerationJob(job.id, input))
       .catch(error => this.logger.error(`Resumed generation job ${job.id} failed:`, error))
       .finally(() => this.activeJobs.delete(job.id));
     this.activeJobs.set(job.id, work);

@@ -1,0 +1,36 @@
+services:
+  video-automation-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-3456}:3456"
+    environment:
+      NODE_ENV: production
+      PORT: 3456
+      API_KEY: ${API_KEY:-}
+      MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-1}
+      MAX_QUEUED_JOBS: ${MAX_QUEUED_JOBS:-100}
+      VIDEO_PROVIDER: ${VIDEO_PROVIDER:-slideshow}
+      VIDEO_GENERATION_MODE: ${VIDEO_GENERATION_MODE:-hybrid}
+      CAPTION_TRANSCRIPTION: ${CAPTION_TRANSCRIPTION:-script}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-}
+    volumes:
+      - studio-data:/app/data
+      - studio-config:/app/config
+      - studio-logs:/app/logs
+      - studio-uploads:/app/uploads
+      - studio-temp:/app/temp
+    restart: unless-stopped
+
+volumes:
+  studio-data:
+  studio-config:
+  studio-logs:
+  studio-uploads:
+  studio-temp:

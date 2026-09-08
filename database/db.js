@@ -245,6 +245,7 @@ class Database {
         production_id TEXT,
         title TEXT,
         error TEXT,
+        idempotency_key TEXT,
         details TEXT,
         cancel_requested INTEGER DEFAULT 0,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -492,13 +493,14 @@ class Database {
       narration_generated_at: 'TEXT',
       narration_cost: "TEXT NOT NULL DEFAULT '{}'"
     });
+    await this.ensureColumns('generation_jobs', { idempotency_key: 'TEXT' });
 
     // Insert default settings
     await this.insertDefaultSettings();
   }
 
   async ensureColumns(tableName, columns) {
-    const allowedTables = new Set(['production_scenes']);
+    const allowedTables = new Set(['production_scenes', 'generation_jobs']);
     if (!allowedTables.has(tableName)) throw new Error(`Unsupported migration table: ${tableName}`);
     const existing = new Set((await this.getAllRows(`PRAGMA table_info(${tableName})`)).map(column => column.name));
     for (const [columnName, definition] of Object.entries(columns)) {
@@ -813,11 +815,17 @@ class Database {
     };
     await this.executeQuery(
       `INSERT INTO generation_jobs (
-        id, topic, style, length, source, status, stage, progress, details
-      ) VALUES (?, ?, ?, ?, ?, 'queued', 'queued', 0, ?)`,
-      [id, input.topic || null, input.style || null, input.length || 'medium', input.source || 'manual', JSON.stringify(details)]
+        id, topic, style, length, source, status, stage, progress, idempotency_key, details
+      ) VALUES (?, ?, ?, ?, ?, 'queued', 'queued', 0, ?, ?)`,
+      [id, input.topic || null, input.style || null, input.length || 'medium', input.source || 'manual', input.idempotencyKey || null, JSON.stringify(details)]
     );
     return this.getGenerationJob(id);
+  }
+
+  async findGenerationJobByIdempotencyKey(key) {
+    if (!key) return null;
+    const row = await this.getRow('SELECT * FROM generation_jobs WHERE idempotency_key = ? ORDER BY created_at DESC LIMIT 1', [key]);
+    return row ? { ...row, details: JSON.parse(row.details || '{}'), cancelRequested: Boolean(row.cancel_requested) } : null;
   }
 
   async getGenerationJob(id) {

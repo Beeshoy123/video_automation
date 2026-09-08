@@ -67,8 +67,8 @@ class MediaGenerationService {
     }));
   }
 
-  async generateClips({ jobId, productionId, script, visualAssets = [], outputDir }) {
-    const settings = await this.settings();
+  async generateClips({ jobId, productionId, script, visualAssets = [], outputDir, overrides = {} }) {
+    const settings = { ...(await this.settings()), ...overrides };
     const routingRequest = {
       duration: settings.clipDuration,
       firstFrame: visualAssets[0] || null,

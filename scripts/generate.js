@@ -15,10 +15,22 @@ Options:
   --style <style>            explainer, tutorial, list, review, story, cartoon
   --length <length>          short, medium, or long
   --format <ratio>           16:9, 9:16, or 1:1
+  --scene-duration <sec>     Target generated clip duration, 3-30 seconds
+  --fit-mode <mode>          cover or contain
+  --transition <mode>        fade or cut
   --music <filename>         Track from data/music
+  --music-volume <value>     Background music volume, 0-1
   --voice-provider <name>    auto, openai, gemini, or elevenlabs
   --voice <name>             Provider voice name or ElevenLabs voice ID
+  --voice-rate <value>       Narration speed, 0.5-2
+  --voice-volume <value>     Narration volume, 0-1.5
   --subtitle-style <style>   clean, bold, neon, or minimal
+  --subtitle-position <pos>  top, center, or bottom
+  --subtitle-size <value>    Subtitle size, 12-40
+  --subtitle-color <color>   Subtitle color, e.g. #FFFFFF
+  --subtitle-background      Use a readable subtitle background
+  --api-key <key>            Dashboard API key (or YAA_API_KEY environment variable)
+  --dry-run                  Validate inputs without queueing generation
   --url <url>                API base URL (default: http://localhost:3456)
   --wait                     Wait for submitted single job to finish
   --help                     Show this help
@@ -32,7 +44,7 @@ function parseArgs(args) {
     if (arg === '--help') return { help: true };
     if (!arg.startsWith('--')) throw new Error(`Unknown argument: ${arg}`);
     const key = arg.slice(2).replaceAll('-', '_');
-    if (key === 'wait') { options.wait = true; continue; }
+    if (key === 'wait' || key === 'dry_run' || key === 'subtitle_background') { options[key] = true; continue; }
     const value = args[index + 1];
     if (!value || value.startsWith('--')) throw new Error(`${arg} requires a value`);
     index += 1;
@@ -57,17 +69,27 @@ function buildStrategy(options) {
   return {
     mode: 'standard',
     musicTrack: options.music,
+    musicVolume: options.music_volume,
     ttsProvider: options.voice_provider || 'auto',
     voiceName: options.voice,
+    voiceRate: options.voice_rate,
+    voiceVolume: options.voice_volume,
     subtitleStyle: options.subtitle_style || 'clean',
-    aspectRatio: options.format || '16:9'
+    subtitlePosition: options.subtitle_position,
+    subtitleSize: options.subtitle_size,
+    subtitleColor: options.subtitle_color,
+    subtitleBackground: options.subtitle_background ? 'true' : 'false',
+    aspectRatio: options.format || '16:9',
+    sceneDuration: options.scene_duration,
+    fitMode: options.fit_mode || 'cover',
+    transitionMode: options.transition || 'fade'
   };
 }
 
-async function request(baseUrl, route, body) {
+async function request(baseUrl, route, body, apiKeyValue) {
   const response = await fetch(`${baseUrl}${route}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(apiKeyValue ? { 'x-api-key': apiKeyValue } : {}) },
     body: JSON.stringify(body)
   });
   const data = await response.json().catch(() => ({}));
@@ -95,16 +117,23 @@ async function main() {
   if (options.batch_file) options.topics.push(...await readTopics(options.batch_file));
   const topics = options.topics.map(topic => String(topic).trim()).filter(Boolean);
   if (!topics.length) throw new Error('Provide --topic or --batch-file');
-  if (topics.length > 20) throw new Error('A batch can contain at most 20 topics');
+  if (topics.length > 100) throw new Error('A batch can contain at most 100 topics');
+  if (topics.some(topic => topic.length > 200)) throw new Error('Each topic must be 200 characters or less');
+  const strategyContext = buildStrategy(options);
+  if (options.dry_run) {
+    console.log(JSON.stringify({ valid: true, topics: topics.length, strategyContext }, null, 2));
+    return;
+  }
   const baseUrl = String(options.url || 'http://localhost:3456').replace(/\/$/, '');
   const body = {
     style: options.style,
     length: options.length || 'medium',
-    strategyContext: buildStrategy(options)
+    strategyContext
   };
+  const apiKeyValue = options.api_key || process.env.YAA_API_KEY || process.env.API_KEY || '';
   const result = topics.length > 1
-    ? await request(baseUrl, '/generate/batch', { ...body, topics })
-    : await request(baseUrl, '/generate', { ...body, topic: topics[0] });
+    ? await request(baseUrl, '/generate/batch', { ...body, topics }, apiKeyValue)
+    : await request(baseUrl, '/generate', { ...body, topic: topics[0] }, apiKeyValue);
   console.log(JSON.stringify(result, null, 2));
   if (options.wait && topics.length === 1 && result.result?.id) {
     const job = await waitForJob(baseUrl, result.result.id);
