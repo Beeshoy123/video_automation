@@ -13,7 +13,8 @@ const MAX_VIDEO_BYTES = 200 * 1024 * 1024;
 function sanitizeName(value) {
   const name = String(value || '').replaceAll('\\', '/').split('/').pop().trim();
   const extension = path.extname(name).toLowerCase();
-  if (!name || name.length > 255 || name === '.' || name === '..' || /[<>:"/\\|?*\x00-\x1f]/.test(name)) {
+  const hasControlCharacter = [...name].some(character => character.charCodeAt(0) < 32);
+  if (!name || name.length > 255 || name === '.' || name === '..' || /[<>:"/\\|?*]/.test(name) || hasControlCharacter) {
     throw Object.assign(new Error('Invalid media filename'), { status: 400 });
   }
   if (!IMAGE_EXTENSIONS.has(extension) && !VIDEO_EXTENSIONS.has(extension)) {

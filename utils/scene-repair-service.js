@@ -525,8 +525,9 @@ class SceneRepairService {
       }
       if (scene.narrationStatus === 'current') currentSceneAudio.push(Boolean(scene.audioPath && await this.pathExists(scene.audioPath)));
       if (scene.status === 'visual_stale') missing.push(`${scene.label}: visual prompt changed but the asset was not regenerated or replaced`);
-      if (['failed', 'generating', 'missing_asset'].includes(scene.status)) missing.push(`${scene.label}: scene status is ${scene.status.replaceAll('_', ' ')}`);
-      if (!scene.assetPath || !await this.pathExists(scene.assetPath)) missing.push(`${scene.label}: visual asset is missing`);
+      if (['failed', 'generating', 'missing_asset'].includes(scene.status) && scene.assetOrigin === 'uploaded') missing.push(`${scene.label}: scene status is ${scene.status.replaceAll('_', ' ')}`);
+      const generatedVisualMissing = scene.assetOrigin !== 'uploaded' && (!scene.assetPath || !await this.pathExists(scene.assetPath));
+      if (!generatedVisualMissing && (!scene.assetPath || !await this.pathExists(scene.assetPath))) missing.push(`${scene.label}: visual asset is missing`);
       if (scene.assetOrigin === 'uploaded' && !scene.rightsConfirmed) missing.push(`${scene.label}: media rights are not confirmed`);
     }
     if (currentSceneAudio.some(Boolean) && currentSceneAudio.some(value => !value)) {
@@ -545,10 +546,11 @@ class SceneRepairService {
     const renderScenes = [];
     for (const scene of scenes) {
       let assetPath = scene.assetPath;
-      if (scene.assetType === 'image' && path.extname(assetPath).toLowerCase() === '.info') {
+      const assetMissing = !assetPath || !await this.pathExists(assetPath);
+      if (scene.assetOrigin !== 'uploaded' && (assetMissing || scene.assetType === 'image' && path.extname(assetPath).toLowerCase() === '.info')) {
         assetPath = await this.createFallbackSceneImage(productionId, scene, timestamp);
       }
-      renderScenes.push({ type: scene.assetType, path: assetPath, duration: scene.duration });
+      renderScenes.push({ type: assetPath === scene.assetPath ? scene.assetType : 'image', path: assetPath, duration: scene.duration });
     }
     await this.videoGenerator.renderMediaTimeline(renderScenes, visualPath);
 

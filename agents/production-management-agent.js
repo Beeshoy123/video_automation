@@ -114,7 +114,7 @@ class ProductionManagementAgent {
       // Save to database
       await this.db.saveProductionData(productionData);
 
-      if (await this.shouldUseFacelessStock()) {
+      if (await this.shouldUseFacelessStock(strategyContext)) {
         await this.processWithFacelessStock(productionData);
         await this.applyBackgroundMusic(productionData, musicTrack, strategyContext.musicVolume);
         const dimensions = await this.aiVideoGenerator.formatVideoAspect(productionData.assets.finalVideo.path, aspectRatio);
@@ -187,9 +187,10 @@ class ProductionManagementAgent {
     }
   }
 
-  async shouldUseFacelessStock() {
+  async shouldUseFacelessStock(strategyContext = {}) {
     const configured = process.env.VIDEO_ENGINE || await this.db.getSetting('video_engine');
-    return configured === 'faceless_stock';
+    if (configured === 'faceless_stock') return true;
+    return strategyContext.aspectRatio === '9:16' && Boolean(this.facelessStock.pexelsKey);
   }
 
   async shouldUseNarrativeStory() {
@@ -496,7 +497,15 @@ class ProductionManagementAgent {
       return visualAssets;
     } catch (error) {
       this.logger.error('AI video content generation failed:', error);
-      // Fallback to placeholder
+      productionData.assets.video = {
+        visualAssets: [],
+        duration: productionData.estimatedDuration,
+        format: 'mp4',
+        resolution: '1920x1080',
+        fps: 30,
+        generatedWith: 'local-fallback',
+        fallbackReason: error.message
+      };
       return await this.createVideoElements(productionData);
     }
   }
@@ -815,7 +824,7 @@ class ProductionManagementAgent {
       // Use AI Video Generator to create the final video
       const producedPath = await this.aiVideoGenerator.generateVideo(
         productionData.script,
-        productionData.assets.video.visualAssets || [],
+        productionData.assets.video?.visualAssets || [],
         productionData.assets.audio.path,
         finalVideoPath,
         {

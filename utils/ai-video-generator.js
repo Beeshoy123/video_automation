@@ -439,10 +439,11 @@ class AIVideoGenerator {
         return produced;
       } catch (fallbackError) {
         this.logger.error(`Local slideshow fallback failed: ${fallbackError.message}`, fallbackError);
-        const produced = await this.simulateVideoGeneration(script, visualAssets, audioPath, outputPath);
+        const produced = await this.generateEmergencyVideo(script, audioPath, outputPath);
         this.lastVideoResult = {
-          requestedProvider: 'configured-provider', actualProvider: 'simulation', model: null,
-          mode: 'simulation', generatedSeconds: 0, fallbackReason: `${reason}; ${fallbackError.message}`, tasks: [], scenes: []
+          requestedProvider: 'configured-provider', actualProvider: 'slideshow_fallback', model: 'local-ffmpeg',
+          mode: 'fallback', generatedSeconds: this.calculateScriptDuration(script),
+          fallbackReason: `${reason}; ${fallbackError.message}`, tasks: [], scenes: []
         };
         return produced;
       }
@@ -588,6 +589,21 @@ class AIVideoGenerator {
       await browser.close().catch(() => {});
       await this.cleanupDirectory(slidesDir);
     }
+  }
+
+  async generateEmergencyVideo(script, audioPath, outputPath) {
+    if (!(await checkFFmpeg())) throw new Error(ffmpegInstallHint());
+    const duration = Math.max(5, this.calculateScriptDuration(script));
+    const hasAudio = await this.isUsableAudioFile(audioPath);
+    const args = [
+      '-y', '-f', 'lavfi', '-i', `color=c=0x172033:s=1920x1080:r=30:d=${duration}`
+    ];
+    if (hasAudio) args.push('-i', audioPath);
+    args.push('-map', '0:v');
+    if (hasAudio) args.push('-map', '1:a', '-c:a', 'aac', '-shortest');
+    args.push('-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outputPath);
+    await runFFmpeg(args);
+    return outputPath;
   }
 
   async renderSlidesToVideo(stills, totalDuration, videoPath, options = {}) {

@@ -42,7 +42,9 @@ module.exports = [
         setTimeout: 'readonly',
         URL: 'readonly',
         window: 'readonly',
-        document: 'readonly'
+        document: 'readonly',
+        Event: 'readonly',
+        Blob: 'readonly'
       }
     },
     rules: {

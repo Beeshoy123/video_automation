@@ -1894,6 +1894,7 @@ function updateCreatePreview() {
   const scenes = field('sceneCount')?.value || '8';
   const length = field('length')?.selectedOptions[0]?.textContent || '8–12 min';
   const aspectRatio = field('aspectRatio')?.value || '16:9';
+  const preview = $('[data-create-preview]');
   const topicNode = $('[data-preview-topic]');
   const styleNode = $('[data-preview-style]');
   const scenesNode = $('[data-preview-scenes]');
@@ -1902,6 +1903,11 @@ function updateCreatePreview() {
   if (styleNode) styleNode.textContent = `${imageStyle} ${style}`.toUpperCase();
   if (scenesNode) scenesNode.textContent = `${scenes} scenes`;
   if (lengthNode) lengthNode.textContent = length.replace(' · ', ' ');
+  if (preview) {
+    preview.classList.toggle('format-portrait', aspectRatio === '9:16');
+    preview.classList.toggle('format-square', aspectRatio === '1:1');
+    preview.setAttribute('aria-label', `${aspectRatio} video preview`);
+  }
   const formatNode = document.querySelector('.preview-format-label');
   if (formatNode) formatNode.textContent = `${aspectRatio} · ${aspectRatio === '9:16' ? 'PORTRAIT' : aspectRatio === '1:1' ? 'SQUARE' : 'LANDSCAPE'}`;
 }
@@ -2065,9 +2071,7 @@ $('#campaign-asset-list')?.addEventListener('click', async event => {
     const result = await mutate(`/api/campaigns/${encodeURIComponent(activeCampaign().id)}/clips/render`, 'POST', { assetId: button.dataset.renderCampaignClip, startSeconds: Number(button.dataset.start), duration: Number(button.dataset.duration), captionText }, 'Campaign clip rendered.');
     const outputPath = result.result?.outputPath;
     if (outputPath) {
-      const compliance = $('#campaign-compliance-panel');
-      compliance.dataset.outputPath = outputPath;
-      compliance.classList.remove('hidden');
+      setCampaignComplianceOutputs([outputPath]);
       await reviewCampaignCompliance(outputPath);
     }
   } catch (_error) { /* toast already shown */ }
@@ -2080,6 +2084,13 @@ async function watchCampaignJob(jobId) {
     const job = response.job;
     if (job.status === 'completed') {
       showToast(`${job.rendered} rendered · ${job.failed} failed`, job.failed ? 'error' : 'success');
+      const outputs = (job.results || job.result?.results || [])
+        .map(item => item.outputPath)
+        .filter(Boolean);
+      if (outputs.length) {
+        setCampaignComplianceOutputs(outputs);
+        await reviewCampaignCompliance(outputs[0]);
+      }
       return;
     }
     if (job.status === 'failed') throw new Error(job.error || 'Campaign render job failed');
@@ -2087,6 +2098,21 @@ async function watchCampaignJob(jobId) {
     setTimeout(poll, 1000);
   };
   await poll();
+}
+
+function setCampaignComplianceOutputs(outputPaths = []) {
+  const compliance = $('#campaign-compliance-panel');
+  const picker = $('#campaign-output-picker');
+  const select = $('#campaign-output-select');
+  if (!compliance || !picker || !select) return;
+  const outputs = [...new Set(outputPaths.filter(Boolean))];
+  select.innerHTML = outputs.map((outputPath, index) => {
+    const fileName = String(outputPath).split(/[\\/]/).pop();
+    return `<option value="${escapeHTML(outputPath)}">Clip ${index + 1} · ${escapeHTML(fileName)}</option>`;
+  }).join('');
+  picker.classList.toggle('hidden', outputs.length < 2);
+  compliance.classList.remove('hidden');
+  select.onchange = () => reviewCampaignCompliance(select.value);
 }
 
 async function reviewCampaignCompliance(outputPath) {
@@ -2286,6 +2312,7 @@ $('#generate-form').addEventListener('submit', async event => {
     mediaAssets: values.mediaAssets
     ,fitMode: values.fitMode
     ,transitionMode: values.transitionMode
+    ,researchSources: values.researchSources.split(/\r?\n/).map(source => source.trim()).filter(Boolean)
   };
   const topics = values.batchTopics.split(/\r?\n/).map(topic => topic.trim()).filter(Boolean);
   if (topics.length > 100) return showToast('A batch can contain at most 100 topics.', 'error');

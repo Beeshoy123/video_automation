@@ -1670,6 +1670,8 @@ class YouTubeAutomationAgent {
       generated.transitionMode = strategyContext.transitionMode || 'fade';
       generated.researchSources = Array.isArray(strategyContext.researchSources)
         ? strategyContext.researchSources
+          .map(source => typeof source === 'string' ? { url: source } : source)
+          .filter(source => source && typeof source.url === 'string' && source.url.trim())
         : [];
       return generated;
     });

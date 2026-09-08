@@ -6,11 +6,12 @@ const { runFFmpeg } = require('./ffmpeg');
 const MUSIC_ROOT = path.resolve(__dirname, '..', 'data', 'music');
 const MAX_BYTES = 30 * 1024 * 1024;
 const EXTENSIONS = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.opus', '.flac']);
-const INVALID_NAME = /[<>:"/\\|?*\x00-\x1f]/;
+const INVALID_NAME = /[<>:"/\\|?*]/;
 
 function sanitizeName(value) {
   const name = String(value || '').replaceAll('\\', '/').split('/').pop().trim();
-  if (!name || name.length > 255 || name === '.' || name === '..' || INVALID_NAME.test(name)) {
+  const hasControlCharacter = [...name].some(character => character.charCodeAt(0) < 32);
+  if (!name || name.length > 255 || name === '.' || name === '..' || INVALID_NAME.test(name) || hasControlCharacter) {
     throw Object.assign(new Error('Invalid music filename'), { status: 400 });
   }
   if (!EXTENSIONS.has(path.extname(name).toLowerCase())) {
