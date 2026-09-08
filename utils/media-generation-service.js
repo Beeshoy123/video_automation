@@ -84,25 +84,36 @@ class MediaGenerationService {
     const effectiveSettings = { ...settings, clipDuration: normalized.duration };
     const scenes = this.buildScenePlan(script, visualAssets, effectiveSettings);
     const clips = [];
-    for (const scene of scenes) {
-      const outputPath = path.join(outputDir, `${productionId}_${provider.id}_${String(scene.index).padStart(2, '0')}.mp4`);
-      const result = await this.generateClip({
-        jobId,
-        productionId,
-        scene,
-        provider,
-        outputPath,
-        request: {
-          prompt: scene.prompt,
-          duration: scene.duration,
-          firstFrame: scene.firstFrame,
-          referenceImages: scene.referenceImages,
-          resolution: settings.resolution,
-          aspectRatio: settings.aspectRatio,
-          generateAudio: settings.generateAudio
-        }
-      });
-      clips.push({ ...scene, path: result.outputPath, provider: provider.id, model: result.task.model, taskId: result.task.external_task_id });
+    try {
+      for (const scene of scenes) {
+        const outputPath = path.join(outputDir, `${productionId}_${provider.id}_${String(scene.index).padStart(2, '0')}.mp4`);
+        const result = await this.generateClip({
+          jobId,
+          productionId,
+          scene,
+          provider,
+          outputPath,
+          request: {
+            prompt: scene.prompt,
+            duration: scene.duration,
+            firstFrame: scene.firstFrame,
+            referenceImages: scene.referenceImages,
+            resolution: settings.resolution,
+            aspectRatio: settings.aspectRatio,
+            generateAudio: settings.generateAudio
+          }
+        });
+        clips.push({ ...scene, path: result.outputPath, provider: provider.id, model: result.task.model, taskId: result.task.external_task_id });
+      }
+    } catch (error) {
+      if (provider.id !== 'slideshow') {
+        this.logger.warn(`${provider.id} failed; falling back to local slideshow: ${safeModelError(error)}`);
+        return {
+          clips: [], requestedProvider: settings.provider, actualProvider: 'slideshow',
+          model: 'local-ffmpeg', fallbackFrom: provider.id, fallbackReason: safeModelError(error), settings
+        };
+      }
+      throw error;
     }
     const models = [...new Set(clips.map(clip => clip.model).filter(Boolean))];
     return {

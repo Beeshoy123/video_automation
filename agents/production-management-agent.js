@@ -5,6 +5,8 @@ const { AIVideoGenerator } = require('../utils/ai-video-generator');
 const { SceneRepairService } = require('../utils/scene-repair-service');
 const { FacelessStockEngine } = require('../utils/faceless-stock-engine');
 const { NarrativeStoryEngine } = require('../utils/narrative-story-engine');
+const { runFFmpeg } = require('../utils/ffmpeg');
+const mediaLibrary = require('../utils/media-library');
 
 class ProductionManagementAgent {
   constructor(db, credentials) {
@@ -62,6 +64,9 @@ class ProductionManagementAgent {
       this.logger.info('Processing content for production...');
       
       const { strategy, script, thumbnail, seo, jobId = null } = contentData;
+      const strategyContext = contentData.strategyContext || {};
+      const musicTrack = strategyContext.musicTrack || null;
+      const aspectRatio = ['16:9', '9:16', '1:1'].includes(strategyContext.aspectRatio) ? strategyContext.aspectRatio : '16:9';
       
       // Create production entry
       const productionId = this.generateProductionId();
@@ -92,6 +97,7 @@ class ProductionManagementAgent {
         scheduledPublishTime: this.calculatePublishTime(strategy),
         priority: this.calculatePriority(strategy),
         estimatedDuration: script.duration,
+        aspectRatio,
         createdAt: new Date().toISOString()
       };
       productionData.jobId = jobId;
@@ -104,6 +110,10 @@ class ProductionManagementAgent {
 
       if (await this.shouldUseFacelessStock()) {
         await this.processWithFacelessStock(productionData);
+        await this.applyBackgroundMusic(productionData, musicTrack);
+        const dimensions = await this.aiVideoGenerator.formatVideoAspect(productionData.assets.finalVideo.path, aspectRatio);
+        productionData.assets.finalVideo.resolution = `${dimensions.width}x${dimensions.height}`;
+        productionData.assets.finalVideo.aspectRatio = aspectRatio;
         await this.sceneRepair.initializeProduction(productionData, productionData.assets.finalVideo.provider || {});
         productionData.status = 'ready';
         productionData.timeline.readyForUpload = new Date().toISOString();
@@ -114,6 +124,10 @@ class ProductionManagementAgent {
 
       if (await this.shouldUseNarrativeStory()) {
         await this.processWithNarrativeStory(productionData);
+        await this.applyBackgroundMusic(productionData, musicTrack);
+        const dimensions = await this.aiVideoGenerator.formatVideoAspect(productionData.assets.finalVideo.path, aspectRatio);
+        productionData.assets.finalVideo.resolution = `${dimensions.width}x${dimensions.height}`;
+        productionData.assets.finalVideo.aspectRatio = aspectRatio;
         await this.sceneRepair.initializeProduction(productionData, productionData.assets.finalVideo.provider || {});
         productionData.status = 'ready';
         productionData.timeline.readyForUpload = new Date().toISOString();
@@ -126,13 +140,23 @@ class ProductionManagementAgent {
       await this.generateVideoContent(productionData);
       
       // Generate audio narration
-      await this.generateAudioNarration(productionData);
+      await this.generateAudioNarration(productionData, strategyContext);
+      await this.applyBackgroundMusic(productionData, musicTrack);
       
       // Generate captions
       await this.generateCaptions(productionData);
       
       // Final assembly
       await this.assembleVideo(productionData);
+
+      productionData.providerSummary = {
+        video: this.aiVideoGenerator.lastVideoResult || { actualProvider: 'slideshow', model: 'local-ffmpeg' },
+        narration: this.aiVideoGenerator.lastNarrationResult || { provider: productionData.assets.audio?.provider || 'simulation' }
+      };
+      productionData.costSummary = {
+        video: productionData.providerSummary.video.cost || { amount: null, currency: null, status: 'provider-priced' },
+        narration: productionData.assets.audio?.cost || { amount: null, currency: null, status: 'provider-priced' }
+      };
 
       // Persist a scene-addressable production manifest for selective review and repair.
       await this.sceneRepair.initializeProduction(productionData, this.aiVideoGenerator.lastVideoResult || {});
@@ -443,7 +467,8 @@ class ProductionManagementAgent {
       
       // Generate visual assets using DALL-E
       const visualPrompts = this.createVisualPromptsFromScript(script);
-      const visualAssets = [];
+      const requestedMedia = String(productionData.strategy?.mediaAssets || '').split(',').map(value => value.trim()).filter(Boolean);
+      const visualAssets = await mediaLibrary.resolveAssets(requestedMedia);
       
       const visualStyle = this.selectVisualStyle(script);
       for (const prompt of visualPrompts) {
@@ -558,7 +583,7 @@ class ProductionManagementAgent {
     return elements;
   }
 
-  async generateAudioNarration(productionData) {
+  async generateAudioNarration(productionData, options = {}) {
     this.logger.info('Generating AI audio narration...');
     
     try {
@@ -568,7 +593,10 @@ class ProductionManagementAgent {
       const ttsText = await fs.readFile(productionData.assets.script.ttsPath, 'utf8');
       
       // Generate audio using AI TTS and retain the provider evidence returned by the generator.
-      const generatedPath = await this.aiVideoGenerator.generateTTSAudio(ttsText, audioPath);
+      const generatedPath = await this.aiVideoGenerator.generateTTSAudio(ttsText, audioPath, {
+        provider: options.ttsProvider,
+        voiceName: options.voiceName
+      });
       const evidence = this.aiVideoGenerator.lastNarrationResult || {};
       const usable = await this.aiVideoGenerator.isUsableAudioFile(generatedPath);
 
@@ -588,6 +616,14 @@ class ProductionManagementAgent {
         error: usable ? null : 'No live narration provider returned usable audio',
         intentionalSilence: false
       };
+      productionData.voice = { provider: options.ttsProvider || 'auto', voice: options.voiceName || null };
+      productionData.subtitleStyle = options.subtitleStyle || 'clean';
+      productionData.subtitleOptions = {
+        position: ['top', 'center', 'bottom'].includes(options.subtitlePosition) ? options.subtitlePosition : 'bottom',
+        color: /^#[0-9a-f]{6}$/i.test(options.subtitleColor || '') ? options.subtitleColor : '#FFFFFF',
+        size: Math.max(12, Math.min(40, Number(options.subtitleSize) || 20)),
+        background: options.subtitleBackground === 'true'
+      };
 
       if (usable) productionData.timeline.audioGenerated = new Date().toISOString();
       return generatedPath;
@@ -595,6 +631,43 @@ class ProductionManagementAgent {
       this.logger.error('AI audio generation failed:', error);
       return await this.simulateAudioGeneration(productionData, error);
     }
+  }
+
+  async applyBackgroundMusic(productionData, trackName) {
+    if (!trackName) return null;
+    const musicRoot = path.resolve(__dirname, '..', 'data', 'music');
+    const musicPath = path.resolve(musicRoot, path.basename(String(trackName)));
+    if (!musicPath.startsWith(`${musicRoot}${path.sep}`)) throw new Error('Background music path is not allowed');
+    const source = await fs.stat(musicPath).catch(() => null);
+    if (!source?.isFile()) throw new Error(`Background music track was not found: ${trackName}`);
+
+    const narrationPath = productionData.assets.audio?.path;
+    if (narrationPath && await this.aiVideoGenerator.isUsableAudioFile(narrationPath)) {
+      const mixedAudioPath = path.join(__dirname, '..', 'data', 'audio', `${productionData.id}_mixed.mp3`);
+      await runFFmpeg([
+        '-y', '-i', narrationPath, '-stream_loop', '-1', '-i', musicPath,
+        '-filter_complex', '[0:a]volume=1[narration];[1:a]volume=0.16[music];[narration][music]amix=inputs=2:duration=first:dropout_transition=2[audio]',
+        '-map', '[audio]', '-c:a', 'libmp3lame', '-q:a', '4', mixedAudioPath
+      ]);
+      productionData.assets.audio.path = mixedAudioPath;
+      productionData.assets.audio.backgroundMusic = { track: path.basename(musicPath), volume: 0.16 };
+      return mixedAudioPath;
+    }
+
+    const finalVideoPath = productionData.assets.finalVideo?.path;
+    if (!finalVideoPath || path.extname(finalVideoPath).toLowerCase() !== '.mp4') return null;
+    const outputPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_music.mp4`);
+    await runFFmpeg([
+      '-y', '-i', finalVideoPath, '-stream_loop', '-1', '-i', musicPath,
+      '-filter_complex', '[0:a]volume=1[original];[1:a]volume=0.16[music];[original][music]amix=inputs=2:duration=first:dropout_transition=2[audio]',
+      '-map', '0:v:0', '-map', '[audio]', '-c:v', 'copy', '-c:a', 'aac', '-shortest', outputPath
+    ]);
+    await fs.rename(outputPath, finalVideoPath);
+    productionData.assets.audio = {
+      ...(productionData.assets.audio || {}),
+      backgroundMusic: { track: path.basename(musicPath), volume: 0.16 }
+    };
+    return finalVideoPath;
   }
 
   async generateCaptions(productionData) {
@@ -726,7 +799,9 @@ class ProductionManagementAgent {
         {
           jobId: productionData.jobId,
           productionId: productionData.id,
-          estimatedDuration: productionData.estimatedDuration
+          estimatedDuration: productionData.estimatedDuration,
+          fitMode: productionData.strategy?.fitMode || 'cover',
+          transitionMode: productionData.strategy?.transitionMode || 'fade'
         }
       );
 
@@ -735,7 +810,8 @@ class ProductionManagementAgent {
         return await this.simulateVideoAssembly(productionData);
       }
 
-      await this.aiVideoGenerator.burnCaptionsIntoVideo(finalVideoPath, productionData.assets.captions?.path);
+      const dimensions = await this.aiVideoGenerator.formatVideoAspect(finalVideoPath, productionData.aspectRatio || '16:9');
+      await this.aiVideoGenerator.burnCaptionsIntoVideo(finalVideoPath, productionData.assets.captions?.path, productionData.subtitleStyle || 'clean', productionData.subtitleOptions || {});
       const validatedVideo = await this.aiVideoGenerator.validateVideoFile(finalVideoPath);
 
       // Get file stats
@@ -746,7 +822,8 @@ class ProductionManagementAgent {
         fileSize: validatedVideo.bytes || stats.size,
         duration: productionData.estimatedDuration,
         generatedWith: 'AI',
-        resolution: '1920x1080',
+        resolution: `${dimensions.width}x${dimensions.height}`,
+        aspectRatio: productionData.aspectRatio || '16:9',
         format: 'mp4',
         provider: this.aiVideoGenerator.lastVideoResult || { actualProvider: 'slideshow', model: 'local-ffmpeg' }
       };

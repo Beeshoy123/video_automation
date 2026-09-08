@@ -24,6 +24,8 @@ const { ProvenanceService } = require('./utils/provenance-service');
 const { SceneRepairService } = require('./utils/scene-repair-service');
 const { ShortsRepurposingService } = require('./utils/shorts-repurposing-service');
 const { CampaignIntakeService } = require('./utils/campaign-intake-service');
+const musicLibrary = require('./utils/music-library');
+const mediaLibrary = require('./utils/media-library');
 const { version } = require('./package.json');
 const chalk = require('chalk');
 
@@ -273,7 +275,7 @@ class YouTubeAutomationAgent {
       if (typeof body.strategyContext !== 'object' || Array.isArray(body.strategyContext)) {
         return { valid: false, status: 400, error: 'strategyContext must be an object' };
       }
-      const limits = { angle: 500, rationale: 1000, audience: 500, objective: 1000, valueProposition: 1000, constraints: 2000, character: 300, visualStyle: 200, sceneCount: 2, voiceDirection: 300, storyType: 40, imageStyle: 40 };
+      const limits = { angle: 500, rationale: 1000, audience: 500, objective: 1000, valueProposition: 1000, constraints: 2000, character: 300, visualStyle: 200, sceneCount: 2, voiceDirection: 300, storyType: 40, imageStyle: 40, musicTrack: 160, ttsProvider: 20, voiceName: 40, subtitleStyle: 20, aspectRatio: 5, subtitlePosition: 10, subtitleColor: 7, subtitleSize: 2, subtitleBackground: 5, mediaAssets: 2000, fitMode: 10, transitionMode: 10 };
       value.strategyContext = {};
       for (const [key, max] of Object.entries(limits)) {
         if (body.strategyContext[key] === undefined || body.strategyContext[key] === null) continue;
@@ -363,6 +365,71 @@ class YouTubeAutomationAgent {
       });
     });
 
+    this.app.get('/api/music', async (_req, res) => {
+      try {
+        const tracks = await musicLibrary.listTracks();
+        res.json({ success: true, tracks });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get('/api/voices', (_req, res) => {
+      res.json({ success: true, voices: {
+        auto: [],
+        openai: ['alloy', 'ash', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'],
+        gemini: ['Kore', 'Zephyr', 'Puck', 'Charon', 'Fenrir', 'Leda', 'Aoede', 'Sulafat'],
+        elevenlabs: []
+      } });
+    });
+
+    this.app.post('/api/voice-preview', this.requireAPIKey(), async (req, res) => {
+      try {
+        const text = String(req.body?.text || 'Preview voice narration for your next video.').trim().slice(0, 240);
+        const provider = String(req.body?.provider || 'auto').trim().toLowerCase();
+        const voiceName = String(req.body?.voiceName || '').trim().slice(0, 80);
+        if (!['auto', 'openai', 'gemini', 'elevenlabs'].includes(provider)) return res.status(400).json({ success: false, error: 'Unsupported voice provider' });
+        const generator = this.agents.production?.aiVideoGenerator;
+        if (!generator) return res.status(503).json({ success: false, error: 'Voice preview is not initialized' });
+        const id = `voice-preview-${require('crypto').randomUUID()}`;
+        const outputPath = path.join(__dirname, 'data', 'audio', `${id}.mp3`);
+        await fs.mkdir(path.dirname(outputPath), { recursive: true });
+        const generatedPath = await generator.generateTTSAudio(text || 'Preview voice narration for your next video.', outputPath, { provider, voiceName });
+        if (!await generator.isUsableAudioFile(generatedPath)) return res.status(422).json({ success: false, error: 'The selected provider did not return usable audio' });
+        return res.json({ success: true, result: { url: `/api/voice-preview/${encodeURIComponent(id)}`, provider: generator.lastNarrationResult?.provider || provider, voiceName } });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get('/api/voice-preview/:id', async (req, res) => {
+      try {
+        if (!/^voice-preview-[a-f0-9-]+$/.test(req.params.id)) return res.status(404).end();
+        const filePath = path.resolve(__dirname, 'data', 'audio', `${req.params.id}.mp3`);
+        if (!filePath.startsWith(`${path.resolve(__dirname, 'data', 'audio')}${path.sep}`)) return res.status(403).end();
+        return res.sendFile(filePath);
+      } catch (_error) { return res.status(404).end(); }
+    });
+
+    this.app.post('/api/music', this.requireAPIKey(), express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '30mb' }), async (req, res) => {
+      try {
+        const result = await musicLibrary.saveTrack(req.body, req.get('x-file-name'));
+        return res.status(201).json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get('/api/media', async (_req, res) => {
+      try { return res.json({ success: true, assets: await mediaLibrary.listAssets() }); }
+      catch (error) { return res.status(500).json({ success: false, error: error.message }); }
+    });
+
+    this.app.post('/api/media', this.requireAPIKey(), express.raw({ type: ['image/*', 'video/*', 'application/octet-stream'], limit: '200mb' }), async (req, res) => {
+      try { return res.status(201).json({ success: true, result: await mediaLibrary.saveAsset(req.body, req.get('x-file-name')) }); }
+      catch (error) { return res.status(error.status || 500).json({ success: false, error: error.message }); }
+    });
+
     // Manual content generation
     this.app.post('/generate', this.requireAPIKey(), async (req, res) => {
       try {
@@ -374,9 +441,30 @@ class YouTubeAutomationAgent {
           return res.status(validation.status).json({ success: false, error: validation.error });
         }
 
-        const { topic, style, length } = validation.value;
-        const result = await this.startGenerationJob({ topic, style, length, source: 'manual' });
+        const { topic, style, length, strategyContext } = validation.value;
+        const result = await this.startGenerationJob({ topic, style, length, strategyContext, source: 'manual' });
         res.status(202).json({ success: true, result });
+      } catch (error) {
+        res.status(error.status || 500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/generate/batch', this.requireAPIKey(), async (req, res) => {
+      try {
+        const topics = Array.isArray(req.body?.topics)
+          ? req.body.topics.map(topic => String(topic || '').trim()).filter(Boolean)
+          : [];
+        if (!topics.length || topics.length > 20) {
+          return res.status(400).json({ success: false, error: 'topics must contain between 1 and 20 items' });
+        }
+        const base = { ...req.body, topic: topics[0] };
+        const validation = this.validateGenerateRequestBody(base);
+        if (!validation.valid) return res.status(validation.status).json({ success: false, error: validation.error });
+        const batchId = `batch_${Date.now().toString(36)}`;
+        const input = { ...validation.value, source: 'batch' };
+        delete input.topic;
+        this.runBatchGeneration(batchId, topics, input).catch(error => this.logger.error(`Batch ${batchId} failed:`, error));
+        res.status(202).json({ success: true, result: { batchId, count: topics.length, status: 'queued' } });
       } catch (error) {
         res.status(error.status || 500).json({ success: false, error: error.message });
       }
@@ -587,6 +675,43 @@ class YouTubeAutomationAgent {
       job.mediaTasks = await this.db.listMediaGenerationTasks(job.id);
       job.resumeFrom = this.recovery?.resumePoint(job.checkpoints);
       return res.json(job);
+    });
+
+    this.app.post('/api/content/:productionId/platform-package', this.requireAPIKey(), async (req, res) => {
+      try {
+        const bundle = await this.db.getProductionBundle(req.params.productionId);
+        if (!bundle) return res.status(404).json({ success: false, error: 'Production not found' });
+        if (bundle.review_status !== 'approved') return res.status(409).json({ success: false, error: 'Approve the production before creating a platform package' });
+        const videoPath = bundle.assets?.finalVideo?.path;
+        if (!videoPath || path.extname(videoPath).toLowerCase() !== '.mp4') return res.status(409).json({ success: false, error: 'A real MP4 is required before export' });
+        await fs.access(videoPath);
+        const outputDir = path.join(__dirname, 'data', 'exports', 'platforms', path.basename(req.params.productionId));
+        await fs.mkdir(outputDir, { recursive: true });
+        const files = {};
+        for (const platform of ['tiktok', 'instagram-reels', 'youtube-shorts']) {
+          const target = path.join(outputDir, `${platform}.mp4`);
+          await fs.copyFile(videoPath, target);
+          files[platform] = path.relative(__dirname, target);
+        }
+        if (bundle.assets?.captions?.path) {
+          const captionsTarget = path.join(outputDir, 'captions.srt');
+          await fs.copyFile(bundle.assets.captions.path, captionsTarget);
+          files.captions = path.relative(__dirname, captionsTarget);
+        }
+        const metadataTarget = path.join(outputDir, 'metadata.json');
+        await fs.writeFile(metadataTarget, JSON.stringify({
+          productionId: bundle.id,
+          title: bundle.seo?.title || bundle.script?.title || bundle.strategy?.topic,
+          description: bundle.seo?.description || '',
+          tags: bundle.seo?.tags || [],
+          aspectRatio: bundle.assets.finalVideo.aspectRatio || null,
+          createdAt: new Date().toISOString()
+        }, null, 2));
+        files.metadata = path.relative(__dirname, metadataTarget);
+        return res.status(201).json({ success: true, result: { productionId: bundle.id, files } });
+      } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+      }
     });
 
     this.app.post('/api/jobs/:jobId/resume', protect, async (req, res) => {
@@ -1133,6 +1258,52 @@ class YouTubeAutomationAgent {
       return res.json({ success: true, result: await this.db.getAllSettings() });
     });
 
+    this.app.get('/api/config/export', protect, async (_req, res) => {
+      const profile = await this.db.getChannelProfile() || {};
+      const settings = await this.db.getAllSettings();
+      const exportedAt = new Date().toISOString();
+      res.json({
+        schemaVersion: 1,
+        exportedAt,
+        product: 'Video Automation Studio',
+        profile,
+        settings,
+        secretsExcluded: true
+      });
+    });
+
+    this.app.post('/api/config/import', protect, async (req, res) => {
+      try {
+        if (!req.body || req.body.schemaVersion !== 1 || typeof req.body.profile !== 'object') {
+          return res.status(400).json({ success: false, error: 'Unsupported configuration file' });
+        }
+        const source = req.body.profile;
+        const profile = this.validateProfile({
+          channelName: source.channelName || source.channel_name,
+          goal: source.goal,
+          targetAudience: source.targetAudience || source.target_audience,
+          brandVoice: source.brandVoice || source.brand_voice,
+          defaultStyle: source.defaultStyle || source.default_style,
+          callToAction: source.callToAction || source.call_to_action,
+          visualStyle: source.visualStyle || source.visual_style,
+          timezone: source.timezone,
+          bannedTopics: source.bannedTopics || source.banned_topics
+        });
+        await this.db.saveChannelProfile(profile);
+        const settings = req.body.settings && typeof req.body.settings === 'object' ? req.body.settings : {};
+        if (settings.video_provider !== undefined && !['slideshow', 'auto', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan'].includes(settings.video_provider)) throw new Error('Unsupported video provider');
+        if (settings.video_engine !== undefined && !['standard', 'faceless_stock', 'narrative_story'].includes(settings.video_engine)) throw new Error('Unsupported video engine');
+        if (settings.video_generation_mode !== undefined && !['hybrid', 'slideshow'].includes(settings.video_generation_mode)) throw new Error('Unsupported video generation mode');
+        const allowed = ['approval_required', 'notification_enabled', 'channel_timezone', 'max_daily_posts', 'content_buffer_days', 'video_provider', 'video_engine', 'video_generation_mode', 'video_clip_duration', 'video_max_generated_seconds'];
+        for (const key of allowed) {
+          if (settings[key] !== undefined) await this.db.setSetting(key, String(settings[key]));
+        }
+        return res.json({ success: true, result: { profile, settings: await this.db.getAllSettings(), secretsExcluded: true } });
+      } catch (error) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+    });
+
     this.app.post('/api/notifications/:notificationId/read', protect, async (req, res) => {
       await this.db.markNotificationRead(req.params.notificationId);
       return res.json({ success: true });
@@ -1248,6 +1419,24 @@ class YouTubeAutomationAgent {
     return job;
   }
 
+  async runBatchGeneration(batchId, topics, input) {
+    this.logger.info(`Starting batch ${batchId} with ${topics.length} topics`);
+    for (const topic of topics) {
+      while (this.activeJobs.size >= Math.max(1, parseInt(process.env.MAX_CONCURRENT_JOBS || '1', 10))) {
+        const active = [...this.activeJobs.values()];
+        if (!active.length) break;
+        await Promise.race(active);
+      }
+      try {
+        const job = await this.startGenerationJob({ ...input, topic, source: 'batch' });
+        await this.waitForGenerationJob(job.id);
+      } catch (error) {
+        this.logger.error(`Batch ${batchId} topic failed: ${topic}`, error);
+      }
+    }
+    this.logger.info(`Batch ${batchId} completed`);
+  }
+
   async resumeGenerationJob(jobId, options = {}) {
     if (this.setupRequired || !this.agents.strategy) {
       const error = new Error('Finish setup with npm run walkthrough before resuming content generation');
@@ -1351,7 +1540,12 @@ class YouTubeAutomationAgent {
         progress: 100,
         productionId: result.contentId,
         title: result.title,
-        details: { reviewStatus: result.reviewStatus, qualityScore: result.qualityScore },
+        details: {
+          reviewStatus: result.reviewStatus,
+          qualityScore: result.qualityScore,
+          providerSummary: result.providerSummary || null,
+          costSummary: result.costSummary || null
+        },
         completedAt: new Date().toISOString()
       });
       await this.db.setSetting('last_content_generation', new Date().toISOString());
@@ -1423,6 +1617,9 @@ class YouTubeAutomationAgent {
       generated.callToAction = profile.call_to_action || null;
       generated.storyType = strategyContext.storyType || null;
       generated.imageStyle = strategyContext.imageStyle || null;
+      generated.mediaAssets = strategyContext.mediaAssets || '';
+      generated.fitMode = strategyContext.fitMode || 'cover';
+      generated.transitionMode = strategyContext.transitionMode || 'fade';
       generated.researchSources = Array.isArray(strategyContext.researchSources)
         ? strategyContext.researchSources
         : [];
@@ -1462,7 +1659,7 @@ class YouTubeAutomationAgent {
       jobId,
       'production',
       62,
-      () => this.agents.production.processContent({ strategy, script, thumbnail, seo: seoData, jobId })
+      () => this.agents.production.processContent({ strategy, script, thumbnail, seo: seoData, jobId, strategyContext })
     );
     this.logger.info('Production processing complete');
 

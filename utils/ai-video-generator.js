@@ -71,7 +71,7 @@ class AIVideoGenerator {
       : null);
   }
 
-  async generateTTSAudio(text, outputPath) {
+  async generateTTSAudio(text, outputPath, options = {}) {
     this.logger.info('Generating TTS audio...');
     this.lastNarrationResult = null;
     let provider = 'simulation';
@@ -79,18 +79,20 @@ class AIVideoGenerator {
 
     try {
       let generatedPath;
-      if (this.elevenLabsApiKey && this.elevenLabsVoiceId) {
+      const requestedProvider = String(options.provider || 'auto').toLowerCase();
+      const voiceName = String(options.voiceName || '').trim();
+      if ((requestedProvider === 'elevenlabs' || requestedProvider === 'auto') && this.elevenLabsApiKey && (voiceName || this.elevenLabsVoiceId)) {
         provider = 'elevenlabs';
         model = this.elevenLabsModel;
-        generatedPath = await this.generateElevenLabsTTS(text, outputPath);
-      } else if (this.openai) {
+        generatedPath = await this.generateElevenLabsTTS(text, outputPath, voiceName || this.elevenLabsVoiceId);
+      } else if ((requestedProvider === 'openai' || requestedProvider === 'auto') && this.openai) {
         provider = 'openai';
         model = 'gpt-4o-mini-tts';
-        generatedPath = await this.generateOpenAITTS(text, outputPath);
-      } else if (this.gemini) {
+        generatedPath = await this.generateOpenAITTS(text, outputPath, voiceName || 'coral');
+      } else if ((requestedProvider === 'gemini' || requestedProvider === 'auto') && this.gemini) {
         provider = 'gemini';
         model = process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
-        generatedPath = await this.generateGeminiTTS(text, outputPath);
+        generatedPath = await this.generateGeminiTTS(text, outputPath, voiceName || process.env.GEMINI_TTS_VOICE || 'Kore');
       } else {
         generatedPath = await this.simulateTTSGeneration(text, outputPath);
       }
@@ -131,8 +133,8 @@ class AIVideoGenerator {
     return audioPath;
   }
 
-  async generateElevenLabsTTS(text, outputPath) {
-    const url = `https://api.elevenlabs.io/v1/text-to-speech/${this.elevenLabsVoiceId}`;
+  async generateElevenLabsTTS(text, outputPath, voiceId = this.elevenLabsVoiceId) {
+    const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
     
     const data = {
       text: text,
@@ -169,10 +171,10 @@ class AIVideoGenerator {
     });
   }
 
-  async generateOpenAITTS(text, outputPath) {
+  async generateOpenAITTS(text, outputPath, voice = 'coral') {
     const response = await this.openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
-      voice: "coral",
+      voice,
       input: text,
       speed: 1.0
     });
@@ -184,9 +186,8 @@ class AIVideoGenerator {
     return outputPath;
   }
 
-  async generateGeminiTTS(text, outputPath) {
+  async generateGeminiTTS(text, outputPath, voiceName = process.env.GEMINI_TTS_VOICE || 'Kore') {
     const model = process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
-    const voiceName = process.env.GEMINI_TTS_VOICE || 'Kore';
 
     const response = await this.gemini.models.generateContent({
       model,
@@ -195,7 +196,7 @@ class AIVideoGenerator {
         responseModalities: ['AUDIO'],
         speechConfig: {
           voiceConfig: {
-            prebuiltVoiceConfig: { voiceName }
+              prebuiltVoiceConfig: { voiceName }
           }
         }
       }
@@ -373,7 +374,8 @@ class AIVideoGenerator {
             visualAssets,
             audioPath,
             outputPath,
-            options.estimatedDuration || this.calculateScriptDuration(script)
+            options.estimatedDuration || this.calculateScriptDuration(script),
+            options
           );
           this.lastVideoResult = {
             requestedProvider: generated.requestedProvider,
@@ -391,7 +393,7 @@ class AIVideoGenerator {
         }
       }
 
-      const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath);
+      const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath, options);
       this.lastVideoResult = { requestedProvider: 'slideshow', actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'slideshow', generatedSeconds: 0, tasks: [], scenes: [] };
       return produced;
     } catch (error) {
@@ -401,7 +403,7 @@ class AIVideoGenerator {
       const reason = error && error.message ? error.message : String(error);
       this.logger.error(`Video provider generation failed; using the local slideshow: ${reason}`, error);
       try {
-        const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath);
+        const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath, options);
         this.lastVideoResult = {
           requestedProvider: this.lastVideoResult?.requestedProvider || 'configured-provider',
           actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'fallback', generatedSeconds: 0,
@@ -420,7 +422,7 @@ class AIVideoGenerator {
     }
   }
 
-  async generateHybridVideo(clips, visualAssets, audioPath, outputPath, totalDuration) {
+  async generateHybridVideo(clips, visualAssets, audioPath, outputPath, totalDuration, options = {}) {
     if (!(await checkFFmpeg())) throw new Error(ffmpegInstallHint());
     const validImages = await this.filterLocalImageAssets(visualAssets);
     const segments = clips.map(clip => ({ type: 'video', path: clip.path, duration: clip.duration }));
@@ -433,13 +435,13 @@ class AIVideoGenerator {
     if (!segments.length) throw new Error('No usable provider clips or still images were generated');
 
     const visualPath = outputPath.replace(/\.mp4$/i, '_hybrid_visual.mp4');
-    await this.renderMediaTimeline(segments, visualPath);
+    await this.renderMediaTimeline(segments, visualPath, options);
     await this.addAudioToVideo(visualPath, audioPath, outputPath, { loopVideo: true });
     await fs.unlink(visualPath).catch(() => {});
     return outputPath;
   }
 
-  async renderMediaTimeline(segments, outputPath) {
+  async renderMediaTimeline(segments, outputPath, options = {}) {
     const args = ['-y'];
     for (const segment of segments) {
       if (segment.type === 'image') args.push('-loop', '1', '-t', Number(segment.duration).toFixed(2), '-framerate', '30', '-i', segment.path);
@@ -447,9 +449,13 @@ class AIVideoGenerator {
     }
     const filters = segments.map((segment, index) => {
       const duration = Number(segment.duration);
-      const fade = Math.min(0.35, Math.max(0.1, duration / 4));
+      const fade = options.transitionMode === 'cut' ? 0 : Math.min(0.35, Math.max(0.1, duration / 4));
       const fadeStart = Math.max(0, duration - fade);
-      return `[${index}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p,trim=duration=${duration.toFixed(2)},setpts=PTS-STARTPTS,fade=t=in:st=0:d=${fade.toFixed(2)},fade=t=out:st=${fadeStart.toFixed(2)}:d=${fade.toFixed(2)}[v${index}]`;
+      const fit = options.fitMode === 'contain'
+        ? 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black'
+        : 'scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080';
+      const fades = fade ? `,fade=t=in:st=0:d=${fade.toFixed(2)},fade=t=out:st=${fadeStart.toFixed(2)}:d=${fade.toFixed(2)}` : '';
+      return `[${index}:v]${fit},fps=30,format=yuv420p,trim=duration=${duration.toFixed(2)},setpts=PTS-STARTPTS${fades}[v${index}]`;
     });
     filters.push(`${segments.map((_, index) => `[v${index}]`).join('')}concat=n=${segments.length}:v=1:a=0[vout]`);
     args.push('-filter_complex', filters.join(';'), '-map', '[vout]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', outputPath);
@@ -502,7 +508,7 @@ class AIVideoGenerator {
     return outputPath;
   }
 
-  async generateSlideshowVideo(script, visualAssets, audioPath, outputPath) {
+  async generateSlideshowVideo(script, visualAssets, audioPath, outputPath, options = {}) {
     this.logger.info('Creating slideshow video...');
 
     if (!(await checkFFmpeg())) {
@@ -545,7 +551,7 @@ class AIVideoGenerator {
 
       const videoPath = outputPath.replace('.mp4', '_visual.mp4');
       const duration = this.calculateScriptDuration(script);
-      await this.renderSlidesToVideo(stills, duration, videoPath);
+      await this.renderSlidesToVideo(stills, duration, videoPath, options);
 
       // Add audio
       await this.addAudioToVideo(videoPath, audioPath, outputPath);
@@ -557,7 +563,7 @@ class AIVideoGenerator {
     }
   }
 
-  async renderSlidesToVideo(stills, totalDuration, videoPath) {
+  async renderSlidesToVideo(stills, totalDuration, videoPath, options = {}) {
     if (stills.length === 0) {
       throw new Error('No slides to render');
     }
@@ -572,6 +578,12 @@ class AIVideoGenerator {
 
     if (stills.length === 1) {
       args.push('-vf', 'format=yuv420p', '-c:v', 'libx264', videoPath);
+      await runFFmpeg(args);
+      return videoPath;
+    }
+
+    if (options.transitionMode === 'cut') {
+      args.push('-filter_complex', `${stills.map((_, index) => `[${index}:v]`).join('')}concat=n=${stills.length}:v=1:a=0[vfinal]`, '-map', '[vfinal]', '-c:v', 'libx264', '-r', '30', videoPath);
       await runFFmpeg(args);
       return videoPath;
     }
@@ -873,20 +885,45 @@ class AIVideoGenerator {
     return outputPath;
   }
 
-  async burnCaptionsIntoVideo(videoPath, captionsPath) {
+  async burnCaptionsIntoVideo(videoPath, captionsPath, style = 'clean', options = {}) {
     if (!captionsPath || path.extname(captionsPath).toLowerCase() !== '.srt') return videoPath;
     await fs.access(captionsPath);
     const captionedPath = videoPath.replace(/\.mp4$/i, '_captioned.mp4');
     const subtitleFile = captionsPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
+    const alignment = { top: 8, center: 5, bottom: 2 }[options.position] || 2;
+    const color = /^#[0-9a-f]{6}$/i.test(options.color || '') ? options.color.slice(1).toUpperCase() : 'FFFFFF';
+    const assColor = `&H00${color.slice(4, 6)}${color.slice(2, 4)}${color.slice(0, 2)}`;
+    const fontSize = Math.max(12, Math.min(40, Number(options.size) || 20));
+    const background = options.background === true ? ',BorderStyle=3,BackColour=&H99000000' : '';
+    const styles = {
+      clean: `FontName=Arial,FontSize=${fontSize},PrimaryColour=${assColor},OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=${alignment},MarginV=42${background}`,
+      bold: `FontName=Arial,FontSize=${fontSize + 4},Bold=1,PrimaryColour=${assColor},OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=${alignment},MarginV=48${background}`,
+      neon: `FontName=Arial,FontSize=${fontSize + 2},Bold=1,PrimaryColour=${assColor},OutlineColour=&H00341B42,BorderStyle=1,Outline=2,Shadow=0,Alignment=${alignment},MarginV=46${background}`,
+      minimal: `FontName=Arial,FontSize=${Math.max(12, fontSize - 2)},PrimaryColour=${assColor},OutlineColour=&H00000000,BorderStyle=1,Outline=1,Shadow=0,Alignment=${alignment},MarginV=32${background}`
+    };
     await runFFmpeg([
       '-y', '-i', videoPath,
-      '-vf', `subtitles='${subtitleFile}'`,
+      '-vf', `subtitles='${subtitleFile}':force_style='${styles[style] || styles.clean}'`,
       '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
       '-c:a', 'copy', '-movflags', '+faststart', captionedPath
     ]);
     await fs.rename(captionedPath, videoPath);
     this.logger.info('Captions burned into video successfully');
     return videoPath;
+  }
+
+  async formatVideoAspect(videoPath, aspectRatio = '16:9') {
+    const dimensions = { '16:9': [1920, 1080], '9:16': [1080, 1920], '1:1': [1080, 1080] }[aspectRatio] || [1920, 1080];
+    const [width, height] = dimensions;
+    const formattedPath = videoPath.replace(/\.mp4$/i, '_formatted.mp4');
+    await runFFmpeg([
+      '-y', '-i', videoPath,
+      '-vf', `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}`,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+      '-c:a', 'copy', '-movflags', '+faststart', formattedPath
+    ]);
+    await fs.rename(formattedPath, videoPath);
+    return { width, height };
   }
 
   async validateVideoFile(videoPath) {

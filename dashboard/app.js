@@ -113,7 +113,7 @@ function renderDashboard() {
   const scheduled = state.schedule.filter(item => item.status === 'scheduled');
   const actionableJobs = state.jobs.filter(job => ['queued', 'running', 'failed', 'interrupted'].includes(job.status));
 
-  $('#brand-name').textContent = state.profile?.channel_name || 'Automation Studio';
+  $('#brand-name').textContent = 'Video Automation Studio';
   $('#setup-banner').classList.toggle('hidden', !state.system.setupRequired);
   $('#system-label').textContent = state.system.setupRequired
     ? 'Setup required'
@@ -304,14 +304,18 @@ function renderJobs(jobs) {
     const progress = Math.max(0, Math.min(100, Number(job.progress || 0)));
     const elapsedMs = job.created_at ? Date.now() - new Date(job.created_at).getTime() : 0;
     const eta = progress > 2 && elapsedMs > 0 ? `${Math.max(1, Math.ceil((elapsedMs * (100 - progress) / progress) / 60000))} min left` : 'Estimating time';
-    const cost = job.details?.actualCost?.amount ?? job.details?.cost?.amount ?? job.details?.estimatedCost?.amount;
+    const rawCost = job.details?.actualCost?.amount ?? job.details?.cost?.amount ?? job.details?.estimatedCost?.amount ?? job.details?.costSummary?.video?.amount ?? job.details?.costSummary?.narration?.amount;
+    const cost = rawCost === null || rawCost === undefined ? undefined : rawCost;
+    const providerSummary = job.details?.providerSummary || {};
+    const providerLabel = providerSummary.video?.actualProvider || providerSummary.narration?.provider;
+    const providerMeta = providerLabel ? `<span>Route ${escapeHTML(label(providerLabel))}</span>` : '';
     return `
     <article class="job-card detailed-job-card">
       <div class="job-meta">
         <strong>${escapeHTML(job.title || job.topic || 'Agent-selected topic')}</strong>
         <div class="meta-line">${statusChip(job.status)} · ${escapeHTML(label(job.stage))} · ${timeAgo(job.updated_at)}</div>
         <div class="generation-stage-track">${stageCards}</div>
-        <div class="generation-meta"><span>${progress}% complete</span><span>${escapeHTML(eta)}</span>${cost !== undefined ? `<span>Cost ${escapeHTML(String(cost))}</span>` : '<span>Cost pending</span>'}</div>
+        <div class="generation-meta"><span>${progress}% complete</span><span>${escapeHTML(eta)}</span>${providerMeta}${cost !== undefined ? `<span>Cost ${escapeHTML(String(cost))}</span>` : '<span>Cost pending</span>'}</div>
         ${checkpoints.length ? `<div class="checkpoint-line">${completed.size}/${stages.length} stages saved${job.details?.reusedStages?.length ? ` · ${job.details.reusedStages.length} reused` : ''}</div>` : ''}
         ${mediaTasks.length ? `<div class="checkpoint-line">Video: ${mediaCompleted}/${mediaTasks.length} clips ready · ${escapeHTML(mediaProviders)}</div>` : ''}
         ${mediaCompleted && job.production_id ? `<div class="partial-preview-strip"><img src="/api/content/${encodeURIComponent(job.production_id)}/asset/thumbnail" alt="Partial production preview"><span>${mediaCompleted} visual${mediaCompleted === 1 ? '' : 's'} ready to preview</span></div>` : ''}
@@ -969,7 +973,7 @@ async function openContent(productionId) {
             <label class="toggle"><input name="factChecked" type="checkbox" ${data.factChecked ? 'checked' : ''}><span></span> Facts and claims reviewed</label>
             <label class="toggle"><input name="rightsConfirmed" type="checkbox" ${data.rightsConfirmed ? 'checked' : ''}><span></span> Media rights confirmed</label>
           </div>
-          ${canReview ? `<div class="form-actions"><button type="button" class="button primary" data-approve-content="${escapeHTML(item.id)}">Approve & schedule</button><button type="button" class="button secondary" data-save-content="${escapeHTML(item.id)}">Save draft</button><button type="button" class="button danger" data-reject-content="${escapeHTML(item.id)}">Reject</button><button type="button" class="button ghost" data-retry-content="${escapeHTML(item.id)}">Regenerate</button></div>` : `<a class="button secondary" href="${escapeHTML(item.schedule?.youtube_url || '#')}" target="_blank" rel="noopener">Open on YouTube</a>`}
+          ${canReview ? `<div class="form-actions"><button type="button" class="button primary" data-approve-content="${escapeHTML(item.id)}">Approve & schedule</button><button type="button" class="button secondary" data-save-content="${escapeHTML(item.id)}">Save draft</button><button type="button" class="button danger" data-reject-content="${escapeHTML(item.id)}">Reject</button><button type="button" class="button ghost" data-retry-content="${escapeHTML(item.id)}">Regenerate</button></div>` : `<div class="form-actions"><a class="button secondary" href="${escapeHTML(item.schedule?.youtube_url || '#')}" target="_blank" rel="noopener">Open on YouTube</a>${item.review_status === 'approved' ? `<button type="button" class="button primary" data-platform-package="${escapeHTML(item.id)}">Export platform package</button>` : ''}</div>`}
         </section>
         ${renderSceneEditor(item, canReview)}
         ${renderShortsStudio(item)}
@@ -1192,6 +1196,7 @@ document.addEventListener('click', async event => {
       document.querySelectorAll('[data-create-style]').forEach(item => item.classList.toggle('selected', item.dataset.createStyle === values.style));
       updateCreatePreview();
       $('#template-preview-dialog')?.close();
+      setupGenerateWizard(true);
       $('#generate-dialog').showModal();
     }
     return;
@@ -1208,6 +1213,7 @@ document.addEventListener('click', async event => {
       }
       document.querySelectorAll('[data-create-style]').forEach(item => item.classList.toggle('selected', item.dataset.createStyle === values.style));
       updateCreatePreview();
+      setupGenerateWizard(true);
       $('#generate-dialog').showModal();
     }
     return;
@@ -1302,6 +1308,12 @@ document.addEventListener('click', async event => {
   if (open) {
     $('#global-search-dialog')?.close();
     return openContent(open.dataset.openContent);
+  }
+
+  const platformPackage = event.target.closest('[data-platform-package]');
+  if (platformPackage) {
+    await mutate(`/api/content/${encodeURIComponent(platformPackage.dataset.platformPackage)}/platform-package`, 'POST', {}, 'Platform package exported.').catch(() => {});
+    return;
   }
 
   const cancel = event.target.closest('[data-cancel-job]');
@@ -1577,9 +1589,136 @@ document.addEventListener('change', event => {
   }
 });
 
-$('#generate-button')?.addEventListener('click', () => $('#generate-dialog').showModal());
-$('#overview-create-button').addEventListener('click', () => $('#generate-dialog').showModal());
-$('#top-generate-button').addEventListener('click', () => $('#generate-dialog').showModal());
+async function loadMusicTracks() {
+  const select = $('#music-track-select');
+  const help = $('#music-track-help');
+  if (!select) return;
+  try {
+    const response = await api('/api/music');
+    const tracks = Array.isArray(response.tracks) ? response.tracks : [];
+    select.innerHTML = '<option value="">No background music</option>' + tracks.map(track => `<option value="${escapeHTML(track)}">${escapeHTML(track)}</option>`).join('');
+    if (help) help.textContent = tracks.length ? `${tracks.length} local track${tracks.length === 1 ? '' : 's'} available · mixed quietly under narration.` : 'Add licensed audio files to data/music.';
+  } catch (_error) {
+    if (help) help.textContent = 'Music library unavailable. Add licensed audio files to data/music.';
+  }
+}
+async function loadVoiceOptions() {
+  const input = $('#generate-form [name="voiceName"]');
+  const provider = $('#generate-form [name="ttsProvider"]');
+  const list = $('#voice-options');
+  if (!input || !provider || !list) return;
+  if (!$('#voice-preview-button')) {
+    input.insertAdjacentHTML('afterend', '<button id="voice-preview-button" type="button" class="button secondary small">Preview voice</button><audio id="voice-preview-audio" controls class="hidden"></audio>');
+    $('#voice-preview-button').addEventListener('click', async () => {
+      const button = $('#voice-preview-button');
+      button.disabled = true;
+      try {
+        const response = await api('/api/voice-preview', { method: 'POST', body: JSON.stringify({ provider: provider.value, voiceName: input.value, text: 'This is a short voice preview for your next video.' }) });
+        const audio = $('#voice-preview-audio');
+        audio.src = response.result.url;
+        audio.classList.remove('hidden');
+        await audio.play().catch(() => {});
+      } catch (error) { showToast(error.message, 'error'); }
+      finally { button.disabled = false; }
+    });
+  }
+  input.setAttribute('list', 'voice-options');
+  try {
+    const response = await api('/api/voices');
+    const voices = response.voices?.[provider.value] || response.voices?.auto || [];
+    list.innerHTML = voices.map(voice => `<option value="${escapeHTML(voice)}"></option>`).join('');
+  } catch (_error) { list.innerHTML = ''; }
+}
+async function loadMediaAssets() {
+  const select = $('#media-assets-select');
+  const help = $('#media-assets-help');
+  if (!select) return;
+  try {
+    const response = await api('/api/media');
+    const assets = Array.isArray(response.assets) ? response.assets : [];
+    select.innerHTML = assets.map(asset => `<option value="${escapeHTML(asset)}">${escapeHTML(asset)}</option>`).join('');
+    if (help) help.textContent = assets.length ? `${assets.length} reusable image/video asset${assets.length === 1 ? '' : 's'} available.` : 'Upload licensed images or videos to build your library.';
+  } catch (_error) {
+    if (help) help.textContent = 'Media library unavailable.';
+  }
+}
+$('#media-assets-upload')?.addEventListener('click', async () => {
+  const file = $('#media-assets-file')?.files[0];
+  if (!file) return showToast('Choose an image or video first.', 'error');
+  try {
+    const response = await fetch('/api/media', { method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream', 'x-file-name': file.name, ...(apiKey() ? { 'x-api-key': apiKey() } : {}) }, body: file });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Media upload failed');
+    await loadMediaAssets();
+    $('#media-assets-file').value = '';
+    showToast('Media uploaded and validated.');
+  } catch (error) { showToast(error.message, 'error'); }
+});
+$('#music-track-upload')?.addEventListener('click', async () => {
+  const file = $('#music-track-file')?.files[0];
+  if (!file) return showToast('Choose a licensed audio file first.', 'error');
+  try {
+    const response = await fetch('/api/music', {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream', 'x-file-name': file.name, ...(apiKey() ? { 'x-api-key': apiKey() } : {}) },
+      body: file
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Music upload failed');
+    await loadMusicTracks();
+    $('#music-track-select').value = data.result.name;
+    $('#music-track-file').value = '';
+    showToast('Licensed music uploaded and validated.');
+  } catch (error) {
+    showToast(error.message, 'error');
+  }
+});
+async function openGenerateDialog() {
+  await loadMusicTracks();
+  await loadMediaAssets();
+  await loadVoiceOptions();
+  setupGenerateWizard(true);
+  $('#generate-dialog').showModal();
+}
+
+function setupGenerateWizard(reset = false) {
+  const form = $('#generate-form');
+  const sections = Array.from(form?.querySelectorAll('.create-form-content > .form-section') || []);
+  const footer = form?.querySelector('.create-studio-footer');
+  if (!form || !sections.length || !footer) return;
+  if (!form.dataset.wizardReady) {
+    form.dataset.wizardReady = 'true';
+    footer.insertAdjacentHTML('afterbegin', '<div class="wizard-controls"><button type="button" class="button secondary small" data-wizard-back>← Back</button><span class="wizard-progress" data-wizard-progress></span><button type="button" class="button primary small" data-wizard-next>Next →</button></div>');
+    footer.querySelector('[data-wizard-back]').addEventListener('click', () => moveGenerateWizard(-1));
+    footer.querySelector('[data-wizard-next]').addEventListener('click', () => moveGenerateWizard(1));
+  }
+  if (reset || !form.dataset.wizardStep) form.dataset.wizardStep = '0';
+  renderGenerateWizard(sections);
+}
+
+function renderGenerateWizard(sections = Array.from($('#generate-form')?.querySelectorAll('.create-form-content > .form-section') || [])) {
+  const form = $('#generate-form');
+  const index = Math.max(0, Math.min(Number(form?.dataset.wizardStep || 0), sections.length - 1));
+  if (form) form.dataset.wizardStep = String(index);
+  sections.forEach((section, sectionIndex) => section.classList.toggle('wizard-hidden', sectionIndex !== index));
+  const back = form?.querySelector('[data-wizard-back]');
+  const next = form?.querySelector('[data-wizard-next]');
+  const progress = form?.querySelector('[data-wizard-progress]');
+  if (back) back.disabled = index === 0;
+  if (next) next.classList.toggle('hidden', index === sections.length - 1);
+  if (progress) progress.textContent = `Step ${index + 1} of ${sections.length}`;
+}
+
+function moveGenerateWizard(delta) {
+  const form = $('#generate-form');
+  const sections = Array.from(form?.querySelectorAll('.create-form-content > .form-section') || []);
+  if (!form || !sections.length) return;
+  form.dataset.wizardStep = String(Number(form.dataset.wizardStep || 0) + delta);
+  renderGenerateWizard(sections);
+}
+$('#generate-button')?.addEventListener('click', openGenerateDialog);
+$('#overview-create-button').addEventListener('click', openGenerateDialog);
+$('#top-generate-button').addEventListener('click', openGenerateDialog);
 $('#global-search-button').addEventListener('click', () => {
   renderGlobalSearch();
   $('#global-search-dialog').showModal();
@@ -1619,6 +1758,7 @@ function updateCreatePreview() {
   const imageStyle = field('imageStyle')?.selectedOptions[0]?.textContent || 'Cinematic';
   const scenes = field('sceneCount')?.value || '8';
   const length = field('length')?.selectedOptions[0]?.textContent || '8–12 min';
+  const aspectRatio = field('aspectRatio')?.value || '16:9';
   const topicNode = $('[data-preview-topic]');
   const styleNode = $('[data-preview-style]');
   const scenesNode = $('[data-preview-scenes]');
@@ -1627,6 +1767,8 @@ function updateCreatePreview() {
   if (styleNode) styleNode.textContent = `${imageStyle} ${style}`.toUpperCase();
   if (scenesNode) scenesNode.textContent = `${scenes} scenes`;
   if (lengthNode) lengthNode.textContent = length.replace(' · ', ' ');
+  const formatNode = document.querySelector('.preview-format-label');
+  if (formatNode) formatNode.textContent = `${aspectRatio} · ${aspectRatio === '9:16' ? 'PORTRAIT' : aspectRatio === '1:1' ? 'SQUARE' : 'LANDSCAPE'}`;
 }
 document.querySelectorAll('[data-create-style]').forEach(button => {
   button.addEventListener('click', () => {
@@ -1638,6 +1780,7 @@ document.querySelectorAll('[data-create-style]').forEach(button => {
 });
 $('#generate-form').addEventListener('input', updateCreatePreview);
 $('#generate-form').addEventListener('change', updateCreatePreview);
+$('#generate-form [name="ttsProvider"]')?.addEventListener('change', loadVoiceOptions);
 const generationTemplates = {
   mystery: { topic: '', style: 'story', length: 'short', storyType: 'mystery', imageStyle: 'cinematic', character: '', visualStyle: 'moody cinematic narrative', sceneCount: '8', voiceDirection: 'Calm, tense storyteller' },
   scary: { topic: '', style: 'story', length: 'short', storyType: 'scary', imageStyle: 'cinematic', character: '', visualStyle: 'dark atmospheric horror', sceneCount: '8', voiceDirection: 'Low, suspenseful narrator' },
@@ -1665,6 +1808,7 @@ document.querySelectorAll('[data-template]').forEach(button => {
     }
     document.querySelectorAll('[data-create-style]').forEach(item => item.classList.toggle('selected', item.dataset.createStyle === values.style));
     updateCreatePreview();
+    setupGenerateWizard(true);
     $('#generate-dialog').showModal();
   });
 });
@@ -1925,6 +2069,7 @@ $('#resume-operator-run').addEventListener('click', async event => {
 $('#generate-form').addEventListener('submit', async event => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(event.currentTarget));
+  values.mediaAssets = Array.from(event.currentTarget.elements.mediaAssets?.selectedOptions || []).map(option => option.value).join(',');
   const cartoonContext = values.style === 'cartoon' ? {
     character: values.character,
     visualStyle: values.visualStyle,
@@ -1933,10 +2078,28 @@ $('#generate-form').addEventListener('submit', async event => {
   } : {};
   const narrativeContext = {
     storyType: values.storyType,
-    imageStyle: values.imageStyle
+    imageStyle: values.imageStyle,
+    musicTrack: values.musicTrack,
+    ttsProvider: values.ttsProvider,
+    voiceName: values.voiceName,
+    subtitleStyle: values.subtitleStyle,
+    aspectRatio: values.aspectRatio,
+    subtitlePosition: values.subtitlePosition,
+    subtitleSize: values.subtitleSize,
+    subtitleColor: values.subtitleColor,
+    subtitleBackground: values.subtitleBackground,
+    mediaAssets: values.mediaAssets
+    ,fitMode: values.fitMode
+    ,transitionMode: values.transitionMode
   };
   try {
-    await mutate('/generate', 'POST', { ...values, topic: values.topic.trim() || null, strategyContext: { ...cartoonContext, ...narrativeContext, mode: 'standard' } }, 'Generation job started.');
+    const topics = values.batchTopics.split(/\r?\n/).map(topic => topic.trim()).filter(Boolean);
+    const strategyContext = { ...cartoonContext, ...narrativeContext, mode: 'standard' };
+    if (topics.length > 1) {
+      await mutate('/generate/batch', 'POST', { ...values, topics, strategyContext }, `${topics.length} generation jobs queued.`);
+    } else {
+      await mutate('/generate', 'POST', { ...values, topic: (topics[0] || values.topic).trim() || null, strategyContext }, 'Generation job started.');
+    }
     $('#generate-dialog').close();
     event.currentTarget.reset();
   } catch (_error) { /* toast already shown */ }
@@ -1969,6 +2132,36 @@ $('#profile-form').addEventListener('submit', async event => {
       video_max_generated_seconds: Number(values.videoMaxGeneratedSeconds)
     }, 'Operator settings saved.');
   } catch (_error) { /* toast already shown */ }
+});
+
+$('#export-config-button').addEventListener('click', async () => {
+  try {
+    const config = await api('/api/config/export');
+    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `video-automation-studio-setup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    showToast('Setup exported without secrets.');
+  } catch (error) {
+    showToast(error.message, 'error');
+  }
+});
+
+$('#import-config-button').addEventListener('click', () => $('#import-config-file').click());
+$('#import-config-file').addEventListener('change', async event => {
+  const file = event.currentTarget.files[0];
+  if (!file) return;
+  try {
+    const config = JSON.parse(await file.text());
+    await mutate('/api/config/import', 'POST', config, 'Setup imported without replacing credentials.');
+    await refreshDashboard(true);
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally {
+    event.currentTarget.value = '';
+  }
 });
 
 $('#api-key-button').addEventListener('click', () => {

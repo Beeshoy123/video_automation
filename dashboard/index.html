@@ -12,7 +12,7 @@
     <aside class="sidebar">
       <a class="brand" href="#overview" aria-label="Video Automation Studio home">
         <span class="brand-mark">▶</span>
-        <span><strong id="brand-name">Automation Studio</strong></span>
+        <span><strong id="brand-name">Video Automation Studio</strong></span>
       </a>
       <nav aria-label="Main navigation">
         <div class="nav-group nav-all-items">
@@ -284,7 +284,7 @@
             <label><span>Clip duration</span><input name="videoClipDuration" type="number" min="3" max="30" step="1"></label>
             <label><span>Paid seconds cap</span><input name="videoMaxGeneratedSeconds" type="number" min="0" max="600" step="1"><small>Maximum provider-generated seconds per production.</small></label>
           </div>
-          <div class="form-actions"><button type="submit" class="button primary">Save channel setup</button><button id="api-key-button" type="button" class="button secondary">Set dashboard API key</button></div>
+          <div class="form-actions"><button type="submit" class="button primary">Save channel setup</button><button id="export-config-button" type="button" class="button secondary">Export setup</button><button id="import-config-button" type="button" class="button secondary">Import setup</button><input id="import-config-file" type="file" accept="application/json,.json" class="visually-hidden-select"><button id="api-key-button" type="button" class="button secondary">Set dashboard API key</button></div>
         </form>
       </section>
     </main>
@@ -308,6 +308,7 @@
           <section class="form-section create-brief" aria-labelledby="brief-heading">
             <div class="form-section-heading"><span class="step-number">1</span><div><h3 id="brief-heading">Start with an idea</h3><p>Describe the story or leave it blank for agent selection.</p></div></div>
             <label><span>Topic <small>optional</small></span><input name="topic" maxlength="200" placeholder="How small teams can automate repetitive work"></label>
+            <label><span>Batch topics <small>optional</small></span><textarea name="batchTopics" rows="3" maxlength="4000" placeholder="One topic per line to queue multiple videos"></textarea><small>Leave blank for one video. Maximum 20 topics per batch.</small></label>
             <div class="create-choice-row"><label><span>Format</span><select name="style" class="visually-hidden-select"><option value="explainer">Explainer</option><option value="tutorial">Tutorial</option><option value="list">List</option><option value="review">Review</option><option value="story">Story</option><option value="cartoon">Original cartoon</option></select><div class="choice-grid format-choices"><button type="button" class="choice-card selected" data-create-style="explainer"><strong>Explainer</strong><small>Clear · useful</small></button><button type="button" class="choice-card" data-create-style="story"><strong>Story</strong><small>Narrative · cinematic</small></button><button type="button" class="choice-card" data-create-style="tutorial"><strong>Tutorial</strong><small>Step by step</small></button></div></label><label><span>Length</span><select name="length"><option value="short">Short · 2–4 min</option><option value="medium" selected>Medium · 8–12 min</option><option value="long">Long · 15–20 min</option></select></label></div>
           </section>
           <section class="form-section" aria-labelledby="story-heading">
@@ -320,12 +321,16 @@
             </div>
           </section>
           <section class="form-section" aria-labelledby="generation-heading">
+                        <datalist id="voice-options"></datalist>
             <div class="form-section-heading"><span class="step-number">3</span><div><h3 id="generation-heading">Production settings</h3><p>Give the storyboard enough structure to make the first cut.</p></div></div>
-            <div class="form-grid two"><label><span>Storyboard scenes</span><select name="sceneCount"><option value="6">6 scenes</option><option value="8" selected>8 scenes</option><option value="10">10 scenes</option></select></label><label><span>Voice direction</span><input name="voiceDirection" maxlength="300" placeholder="Warm, friendly narrator"></label></div>
+            <div class="form-grid two"><label><span>Storyboard scenes</span><select name="sceneCount"><option value="6">6 scenes</option><option value="8" selected>8 scenes</option><option value="10">10 scenes</option></select></label><label><span>Voice direction</span><input name="voiceDirection" maxlength="300" placeholder="Warm, friendly narrator"></label><label><span>Voice provider</span><select name="ttsProvider"><option value="auto">Automatic</option><option value="openai">OpenAI</option><option value="gemini">Gemini</option><option value="elevenlabs">ElevenLabs</option></select></label><label><span>Voice</span><input name="voiceName" maxlength="40" placeholder="coral, Kore, or ElevenLabs voice ID"><small>Leave blank to use the configured default.</small></label><label><span>Output format</span><select name="aspectRatio"><option value="16:9">Landscape · 16:9</option><option value="9:16">Portrait · 9:16</option><option value="1:1">Square · 1:1</option></select></label><label><span>Background music</span><select name="musicTrack" id="music-track-select"><option value="">No background music</option></select><small id="music-track-help">Add licensed audio files to data/music.</small><input id="music-track-file" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.opus,.flac"><button id="music-track-upload" type="button" class="button secondary small">Upload licensed track</button></label><label><span>Subtitle style</span><select name="subtitleStyle"><option value="clean">Clean</option><option value="bold">Bold</option><option value="neon">Neon orchid</option><option value="minimal">Minimal</option></select></label></div>
+            <label class="full-row"><span>Reusable media assets</span><select id="media-assets-select" name="mediaAssets" multiple size="3"></select><small id="media-assets-help">Upload licensed images or videos to build your library.</small><input id="media-assets-file" type="file" accept="image/*,video/*"><button id="media-assets-upload" type="button" class="button secondary small">Upload media asset</button></label>
+            <div class="form-grid two subtitle-controls"><label><span>Subtitle position</span><select name="subtitlePosition"><option value="bottom">Bottom</option><option value="center">Center</option><option value="top">Top</option></select></label><label><span>Subtitle size</span><input name="subtitleSize" type="number" min="12" max="40" value="20"></label><label><span>Subtitle color</span><input name="subtitleColor" type="color" value="#ffffff"></label><label><span>Subtitle background</span><select name="subtitleBackground"><option value="false">Outline only</option><option value="true">Readable box</option></select></label></div>
+            <div class="form-grid two"><label><span>Media fit</span><select name="fitMode"><option value="cover">Cover frame</option><option value="contain">Contain with borders</option></select></label><label><span>Scene transition</span><select name="transitionMode"><option value="fade">Fade</option><option value="cut">Hard cut</option></select></label></div>
           </section>
         </div>
       </div>
-      <div class="create-studio-footer"><p class="callout">Generation runs in the background. You can follow each stage and cancel between stages.</p><div class="form-actions"><button type="submit" class="button primary">✦ Start generation</button><button type="button" class="button ghost" data-close>Cancel</button></div></div>
+      <div class="create-studio-footer"><div class="form-actions"><button type="submit" class="button primary">✦ Start generation</button><button type="button" class="button ghost" data-close>Cancel</button></div></div>
     </form>
   </dialog>
 

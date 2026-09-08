@@ -41,6 +41,16 @@ npm start
 
 Open `http://localhost:3456`. The walkthrough explains each provider choice, tests credentials, and guides YouTube authorization.
 
+The same generation workflow is available from the CLI while the app is running:
+
+```bash
+npm run generate -- --topic "How AI changes everyday work" --format 9:16 --wait
+npm run generate -- --topic "First idea" --topic "Second idea"
+npm run generate -- --batch-file topics.json
+```
+
+The CLI submits jobs to the dashboard API, so provider routing, review gates, checkpoints, audio, subtitles, and output formats behave the same way as they do in the WebUI.
+
 Already know what you are doing? `npm run setup` offers a shorter classic flow, and `.env.example` documents every setting.
 
 ### Verify production readiness

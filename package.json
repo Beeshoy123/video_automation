@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "generate": "node scripts/generate.js",
     "setup": "node setup.js",
     "walkthrough": "node walkthrough.js",
     "growth:snapshot": "node scripts/growth/snapshot-github.js",
