@@ -33,6 +33,7 @@ class FacelessStockEngine {
     this.tts = options.tts;
     this.pexelsKey = options.pexelsKey || resolvedCredentials.pexels?.apiKey || process.env.PEXELS_API_KEY;
     this.voice = options.voice || process.env.FACELESS_TTS_VOICE || DEFAULT_VOICE;
+    this.avatarPath = options.avatarPath || process.env.FACELESS_AVATAR_PATH || null;
     this.http = options.http || axios;
     this.mediaCache = options.mediaCache || new StockMediaCache(path.resolve(__dirname, '..', 'data', 'media-cache'));
     this.sceneCount = Math.max(4, Math.min(10, Number(options.sceneCount || process.env.FACELESS_SCENE_COUNT || DEFAULT_SCENE_COUNT)));
@@ -53,6 +54,8 @@ class FacelessStockEngine {
     await Promise.all([audioDir, videoDir, sceneDir].map(directory => fs.mkdir(directory, { recursive: true })));
 
     const scenes = await this.planScenes(topic, script);
+    const avatar = await this.resolveAvatar();
+    const avatarIndex = avatar && scenes.length >= 4 ? this.chooseAvatarIndex(scenes.length, topic) : -1;
     const rendered = [];
     const sourceAssets = [];
     let currentTime = 0;
@@ -60,9 +63,13 @@ class FacelessStockEngine {
     for (const [index, scene] of scenes.entries()) {
       const sceneId = index + 1;
       const audioPath = path.join(audioDir, `scene-${sceneId}.mp3`);
-      await this.tts.generateTTSAudio(`${scene.text}`, audioPath);
+      await this.generateNarrationWithRetry(scene.text, audioPath);
+      await this.trimNarrationSilence(audioPath);
+      await this.fitNarrationDuration(audioPath, 8);
       const duration = await this.audioDuration(audioPath);
-      const clips = await this.downloadPair(scene, videoDir, sceneId);
+      const clips = avatarIndex === index
+        ? [{ path: avatar, provider: 'local-avatar', query: 'configured avatar' }, { path: avatar, provider: 'local-avatar', query: 'configured avatar' }]
+        : await this.downloadPair(scene, videoDir, sceneId);
       sourceAssets.push(...clips.map(item => ({ ...item, scene: sceneId })));
       const renderedPath = path.join(sceneDir, `scene-${sceneId}.mp4`);
       await this.renderScene(clips, audioPath, duration, renderedPath);
@@ -71,7 +78,7 @@ class FacelessStockEngine {
     }
 
     const finalPath = path.join(root, 'final-short.mp4');
-    await this.concatScenes(rendered.map(scene => scene.path), finalPath);
+    await this.concatScenes(rendered.map(scene => scene.path), finalPath, rendered);
     const captionsPath = path.join(root, 'captions.srt');
     await fs.writeFile(captionsPath, this.buildCaptions(rendered), 'utf8');
 
@@ -86,7 +93,8 @@ class FacelessStockEngine {
         actualProvider: 'faceless_stock',
         model: 'gemini+pexels+tts+ffmpeg',
         voice: this.voice,
-        aspectRatio: '9:16'
+        aspectRatio: '9:16',
+        avatarInjected: avatarIndex >= 0
       }
     };
   }
@@ -132,61 +140,90 @@ class FacelessStockEngine {
   }
 
   async searchVideo(query) {
+    const results = await this.searchVideos(query);
+    return results[0] || null;
+  }
+
+  async searchVideos(query, excludedAssetIds = []) {
     const params = { orientation: 'portrait', size: 'medium', per_page: 5 };
     const cached = await this.mediaCache.readSearch('pexels', query, params);
-    if (cached?.length) return cached[0];
+    if (cached?.length) {
+      const available = cached.filter(item => !excludedAssetIds.includes(String(item.assetId)));
+      if (available.length) return available;
+    }
     const response = await this.http.get('https://api.pexels.com/videos/search', {
       headers: { Authorization: this.pexelsKey },
       params: { query, ...params },
       timeout: 15000
     });
     const videos = (response.data?.videos || []).filter(video => video.duration >= 3);
-    const selected = (videos.length ? videos : response.data?.videos || [])[0];
-    if (!selected) return null;
-    const files = [...(selected.video_files || [])].sort((a, b) => (b.width * b.height) - (a.width * a.height));
-    if (!files[0]?.link) return null;
-    const result = {
-      provider: 'pexels',
-      assetId: String(selected.id || ''),
-      sourcePage: selected.url || null,
-      creator: selected.user?.name || null,
-      query,
-      duration: Number(selected.duration || 0),
-      width: Number(files[0].width || 0),
-      height: Number(files[0].height || 0),
-      url: files[0].link
-    };
-    await this.mediaCache.writeSearch('pexels', query, params, [result]);
-    return result;
+    const results = (videos.length ? videos : response.data?.videos || [])
+      .map(video => {
+        const files = [...(video.video_files || [])].sort((a, b) => (b.width * b.height) - (a.width * a.height));
+        if (!files[0]?.link) return null;
+        return {
+          provider: 'pexels',
+          assetId: String(video.id || ''),
+          sourcePage: video.url || null,
+          creator: video.user?.name || null,
+          query,
+          duration: Number(video.duration || 0),
+          width: Number(files[0].width || 0),
+          height: Number(files[0].height || 0),
+          url: files[0].link
+        };
+      })
+      .filter(Boolean);
+    if (!results.length) {
+      const simplifiedQuery = String(query || '').trim().split(/\s+/).filter(Boolean).pop();
+      if (simplifiedQuery && simplifiedQuery.toLowerCase() !== String(query || '').trim().toLowerCase()) {
+        this.logger.info(`Retrying Pexels search with simplified query: ${simplifiedQuery}`);
+        return this.searchVideos(simplifiedQuery, excludedAssetIds);
+      }
+    }
+    await this.mediaCache.writeSearch('pexels', query, params, results);
+    return results.filter(item => !excludedAssetIds.includes(String(item.assetId)));
   }
 
   async downloadPair(scene, videoDir, sceneId) {
     const queries = [scene.visual_1, scene.visual_2 || scene.visual_1];
     const paths = [];
+    const selectedAssetIds = [];
     for (const [index, query] of queries.entries()) {
-      let source = null;
-      try { source = await this.searchVideo(query); } catch (error) { this.logger.warn(`Pexels search failed for scene ${sceneId}: ${error.message}`); }
-      if (source?.url) {
-        const target = path.join(videoDir, `scene-${sceneId}-${index + 1}.mp4`);
-        const cachedDownload = await this.mediaCache.materialize('pexels', source.url);
-        if (!cachedDownload.hit) {
-          const response = await this.http.get(source.url, { responseType: 'arraybuffer', timeout: 30000 });
-          await fs.writeFile(cachedDownload.filePath, response.data);
+      let sources = [];
+      try { sources = await this.searchVideos(query, selectedAssetIds); } catch (error) { this.logger.warn(`Pexels search failed for scene ${sceneId}: ${error.message}`); }
+      const offset = sources.length ? (sceneId + index - 1) % sources.length : 0;
+      const orderedSources = sources.length
+        ? [...sources.slice(offset), ...sources.slice(0, offset)]
+        : sources;
+      for (const source of orderedSources) {
+        try {
+          const target = path.join(videoDir, `scene-${sceneId}-${index + 1}.mp4`);
+          const cachedDownload = await this.mediaCache.materialize('pexels', source.url);
+          if (!cachedDownload.hit) {
+            const response = await this.http.get(source.url, { responseType: 'arraybuffer', timeout: 30000 });
+            await fs.writeFile(cachedDownload.filePath, response.data);
+          }
+          await this.validateVideoClip(cachedDownload.filePath);
+          await fs.copyFile(cachedDownload.filePath, target);
+          paths.push({
+            path: target,
+            query,
+            provider: source.provider,
+            assetId: source.assetId,
+            sourcePage: source.sourcePage,
+            creator: source.creator,
+            duration: source.duration,
+            width: source.width,
+            height: source.height,
+            cacheHit: cachedDownload.hit,
+            checksum: await this.mediaCache.checksum(cachedDownload.filePath)
+          });
+          selectedAssetIds.push(String(source.assetId));
+          break;
+        } catch (error) {
+          this.logger.warn(`Pexels clip rejected for scene ${sceneId}: ${error.message}`);
         }
-        await fs.copyFile(cachedDownload.filePath, target);
-        paths.push({
-          path: target,
-          query,
-          provider: source.provider,
-          assetId: source.assetId,
-          sourcePage: source.sourcePage,
-          creator: source.creator,
-          duration: source.duration,
-          width: source.width,
-          height: source.height,
-          cacheHit: cachedDownload.hit,
-          checksum: await this.mediaCache.checksum(cachedDownload.filePath)
-        });
       }
     }
     if (!paths.length) throw new Error(`Pexels returned no usable videos for scene ${sceneId}`);
@@ -194,10 +231,89 @@ class FacelessStockEngine {
     return paths;
   }
 
+  async validateVideoClip(filePath) {
+    const stats = await fs.stat(filePath);
+    if (!stats.isFile() || stats.size < 1000) throw new Error('downloaded file is empty or too small');
+    await runFFmpeg(['-v', 'error', '-i', filePath, '-map', '0:v:0', '-f', 'null', '-']);
+  }
+
   async audioDuration(audioPath) {
-    const { stdout } = await require('./ffmpeg').runFFmpeg(['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', '-i', audioPath]);
-    const duration = Number.parseFloat(stdout.trim());
+    const nullOutput = process.platform === 'win32' ? 'NUL' : '/dev/null';
+    let output = '';
+    try {
+      const result = await runFFmpeg(['-hide_banner', '-i', audioPath, '-f', 'null', nullOutput]);
+      output = `${result.stdout || ''}\n${result.stderr || ''}`;
+    } catch (error) {
+      output = `${error.stdout || ''}\n${error.stderr || ''}\n${error.message || ''}`;
+    }
+    const match = output.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/i);
+    const duration = match
+      ? Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3])
+      : Number.NaN;
     return Number.isFinite(duration) && duration > 0 ? duration : 4;
+  }
+
+  async generateNarrationWithRetry(text, audioPath, retries = 3) {
+    let lastError;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        return await this.tts.generateTTSAudio(String(text), audioPath);
+      } catch (error) {
+        lastError = error;
+        this.logger.warn(`Narration failed for attempt ${attempt}/${retries}: ${error.message}`);
+        if (attempt < retries) await new Promise(resolve => setTimeout(resolve, 750 * attempt));
+      }
+    }
+    throw lastError || new Error('Narration generation failed');
+  }
+
+  async resolveAvatar() {
+    if (!this.avatarPath) return null;
+    try {
+      await this.validateVideoClip(this.avatarPath);
+      return this.avatarPath;
+    } catch (error) {
+      this.logger.warn(`Configured faceless avatar was rejected: ${error.message}`);
+      return null;
+    }
+  }
+
+  chooseAvatarIndex(sceneCount, topic = '') {
+    const middleCount = Math.max(1, sceneCount - 2);
+    const seed = [...String(topic)].reduce((total, character) => total + character.charCodeAt(0), 0);
+    return 1 + (seed % middleCount);
+  }
+
+  async trimNarrationSilence(audioPath) {
+    const trimmedPath = audioPath.replace(/\.mp3$/i, '_trimmed.mp3');
+    await runFFmpeg([
+      '-y', '-i', audioPath,
+      '-af', 'silenceremove=start_periods=1:start_duration=0.18:start_threshold=-45dB:stop_periods=1:stop_duration=0.32:stop_threshold=-45dB',
+      '-c:a', 'libmp3lame', '-b:a', '160k', trimmedPath
+    ]);
+    await fs.rename(trimmedPath, audioPath);
+    return audioPath;
+  }
+
+  async fitNarrationDuration(audioPath, maximumSeconds) {
+    const duration = await this.audioDuration(audioPath);
+    if (duration <= maximumSeconds) return audioPath;
+    const tempo = Math.min(1.5, Math.max(1, duration / maximumSeconds));
+    const filters = [];
+    let remaining = tempo;
+    while (remaining > 2) {
+      filters.push('atempo=2');
+      remaining /= 2;
+    }
+    filters.push(`atempo=${remaining.toFixed(3)}`);
+    const fittedPath = audioPath.replace(/\.mp3$/i, '_fitted.mp3');
+    await runFFmpeg([
+      '-y', '-i', audioPath,
+      '-af', filters.join(','),
+      '-c:a', 'libmp3lame', '-b:a', '160k', fittedPath
+    ]);
+    await fs.rename(fittedPath, audioPath);
+    return audioPath;
   }
 
   async renderScene(clips, audioPath, duration, outputPath) {
@@ -210,14 +326,42 @@ class FacelessStockEngine {
     ]);
   }
 
-  async concatScenes(paths, outputPath) {
-    const listPath = `${outputPath}.txt`;
-    await fs.writeFile(listPath, paths.map(item => `file '${item.replace(/'/g, "'\\''")}'`).join('\n'), 'utf8');
-    try {
-      await runFFmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', '-movflags', '+faststart', outputPath]);
-    } finally {
-      await fs.unlink(listPath).catch(() => {});
+  async concatScenes(paths, outputPath, scenes = []) {
+    if (paths.length <= 1) {
+      await fs.copyFile(paths[0], outputPath);
+      return;
     }
+
+    const transition = 0.35;
+    const transitionStyles = ['fade', 'slideleft', 'slideright', 'wipeleft', 'wiperight'];
+    const durations = paths.map((_, index) => Math.max(1, Number(scenes[index]?.duration || 1)));
+    const args = ['-y'];
+    paths.forEach(scenePath => args.push('-i', scenePath));
+    const filters = [];
+    let videoLabel = '[0:v]';
+    let audioLabel = '[0:a]';
+    let elapsed = durations[0];
+
+    for (let index = 1; index < paths.length; index++) {
+      const duration = Math.min(transition, durations[index - 1] / 2, durations[index] / 2);
+      const nextVideo = `[v${index}]`;
+      const nextAudio = `[a${index}]`;
+      const offset = Math.max(0, elapsed - duration).toFixed(3);
+      const transitionStyle = transitionStyles[(index - 1) % transitionStyles.length];
+      filters.push(`${videoLabel}[${index}:v]xfade=transition=${transitionStyle}:duration=${duration.toFixed(3)}:offset=${offset}${nextVideo}`);
+      filters.push(`${audioLabel}[${index}:a]acrossfade=d=${duration.toFixed(3)}:curve1=tri:curve2=tri${nextAudio}`);
+      videoLabel = nextVideo;
+      audioLabel = nextAudio;
+      elapsed += durations[index] - duration;
+    }
+
+    args.push(
+      '-filter_complex', filters.join(';'),
+      '-map', videoLabel, '-map', audioLabel,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-movflags', '+faststart', outputPath
+    );
+    await runFFmpeg(args);
   }
 
   buildCaptions(scenes) {

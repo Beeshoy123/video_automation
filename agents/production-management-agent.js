@@ -206,6 +206,20 @@ class ProductionManagementAgent {
       script: productionData.script,
       outputDir
     });
+    await this.aiVideoGenerator.burnCaptionsIntoVideo(
+      result.finalPath,
+      result.captionsPath,
+      productionData.strategyContext?.subtitleStyle || 'bold',
+      {
+        position: productionData.strategyContext?.subtitlePosition || 'bottom',
+        size: productionData.strategyContext?.subtitleSize,
+        color: productionData.strategyContext?.subtitleColor,
+        outlineColor: productionData.strategyContext?.subtitleOutlineColor,
+        outlineWidth: productionData.strategyContext?.subtitleOutlineWidth,
+        background: productionData.strategyContext?.subtitleBackground === 'true'
+      }
+    );
+    const validatedVideo = await this.aiVideoGenerator.validateVideoFile(result.finalPath);
     const stats = await fs.stat(result.finalPath);
     productionData.assets.video = {
       duration: result.duration,
@@ -233,7 +247,7 @@ class ProductionManagementAgent {
     };
     productionData.assets.finalVideo = {
       path: result.finalPath,
-      fileSize: stats.size,
+      fileSize: validatedVideo.bytes || stats.size,
       duration: result.duration,
       generatedWith: 'faceless_stock',
       resolution: '1080x1920',

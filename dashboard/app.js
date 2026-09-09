@@ -1239,10 +1239,10 @@ async function persistProvenance(productionId, successMessage = null) {
   }
 }
 
-async function mutate(url, method, body, successMessage) {
+async function mutate(url, method, body, successMessage, requestOptions = {}) {
   $('#loading').classList.add('active');
   try {
-    const result = await api(url, { method, body: body === undefined ? undefined : JSON.stringify(body) });
+    const result = await api(url, { ...requestOptions, method, body: body === undefined ? undefined : JSON.stringify(body) });
     showToast(successMessage);
     await refreshDashboard(true);
     return result;
@@ -1927,7 +1927,7 @@ const generationTemplates = {
   scary: { topic: '', style: 'story', length: 'short', storyType: 'scary', imageStyle: 'cinematic', character: '', visualStyle: 'dark atmospheric horror', sceneCount: '8', voiceDirection: 'Low, suspenseful narrator' },
   facts: { topic: '', style: 'explainer', length: 'short', storyType: 'fun_facts', imageStyle: 'photorealistic', character: '', visualStyle: 'clean documentary visuals', sceneCount: '6', voiceDirection: 'Curious, energetic narrator' },
   motivational: { topic: '', style: 'story', length: 'short', storyType: 'motivational', imageStyle: 'cinematic', character: '', visualStyle: 'warm cinematic realism', sceneCount: '8', voiceDirection: 'Warm, encouraging narrator' },
-  shorts: { topic: '', style: 'explainer', length: 'short', storyType: 'fun_facts', imageStyle: 'cinematic', character: '', visualStyle: 'bold vertical documentary', sceneCount: '6', voiceDirection: 'Fast, clear narrator' },
+  shorts: { topic: '', style: 'explainer', length: 'short', aspectRatio: '9:16', storyType: 'fun_facts', imageStyle: 'cinematic', character: '', visualStyle: 'bold vertical documentary', sceneCount: '6', voiceDirection: 'Fast, clear narrator' },
   history: { topic: '', style: 'story', length: 'short', storyType: 'history', imageStyle: 'cinematic', character: '', visualStyle: 'period documentary realism', sceneCount: '8', voiceDirection: 'Measured documentary narrator' }
 };
 const templateCatalog = {
@@ -2283,8 +2283,10 @@ $('#resume-operator-run').addEventListener('click', async event => {
 
 $('#generate-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const values = Object.fromEntries(new FormData(event.currentTarget));
-  values.mediaAssets = Array.from(event.currentTarget.elements.mediaAssets?.selectedOptions || []).map(option => option.value).join(',');
+  const form = event.currentTarget;
+  if (form.dataset.submitting === 'true') return;
+  const values = Object.fromEntries(new FormData(form));
+  values.mediaAssets = Array.from(form.elements.mediaAssets?.selectedOptions || []).map(option => option.value).join(',');
   const cartoonContext = values.style === 'cartoon' ? {
     character: values.character,
     visualStyle: values.visualStyle,
@@ -2317,16 +2319,23 @@ $('#generate-form').addEventListener('submit', async event => {
   const topics = values.batchTopics.split(/\r?\n/).map(topic => topic.trim()).filter(Boolean);
   if (topics.length > 100) return showToast('A batch can contain at most 100 topics.', 'error');
   if (topics.some(topic => topic.length > 200)) return showToast('Each batch topic must be 200 characters or less.', 'error');
+  form.dataset.submitting = 'true';
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.disabled = true;
   try {
     const strategyContext = { ...cartoonContext, ...narrativeContext, mode: 'standard' };
     if (topics.length > 1) {
       await mutate('/generate/batch', 'POST', { ...values, topics, strategyContext }, `${topics.length} generation jobs queued.`);
     } else {
-      await mutate('/generate', 'POST', { ...values, topic: (topics[0] || values.topic).trim() || null, strategyContext }, 'Generation job started.');
+      await mutate('/generate', 'POST', { ...values, topic: (topics[0] || values.topic).trim() || null, strategyContext }, 'Generation job started.', { headers: { 'Idempotency-Key': clientId('generation') } });
     }
     $('#generate-dialog').close();
-    event.currentTarget.reset();
+    form.reset();
   } catch (_error) { /* toast already shown */ }
+  finally {
+    form.dataset.submitting = 'false';
+    if (submitButton) submitButton.disabled = false;
+  }
 });
 
 $('#idea-form').addEventListener('submit', async event => {

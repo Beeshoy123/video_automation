@@ -123,6 +123,29 @@ class AIVideoGenerator {
       };
       return generatedPath;
     } catch (error) {
+      if (provider === 'openai' && this.gemini) {
+        try {
+          this.logger.warn(`OpenAI narration failed; falling back to Gemini: ${error.message}`);
+          const fallbackPath = await this.generateGeminiTTS(text, outputPath, options.voiceName || process.env.GEMINI_TTS_VOICE || 'Kore');
+          const usable = await this.isUsableAudioFile(fallbackPath);
+          const normalizedPath = usable ? await this.normalizeNarrationAudio(fallbackPath) : fallbackPath;
+          this.lastNarrationResult = {
+            status: usable ? 'ready' : 'unavailable',
+            path: normalizedPath,
+            provider: 'gemini',
+            model: process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview',
+            externalTaskId: null,
+            generatedAt: new Date().toISOString(),
+            simulated: !usable,
+            fallbackFrom: 'openai',
+            error: error.message,
+            cost: { provider: 'gemini', amount: null, currency: null, invoiceRequired: true }
+          };
+          return normalizedPath;
+        } catch (fallbackError) {
+          this.logger.error(`Gemini narration fallback failed: ${fallbackError.message}`);
+        }
+      }
       this.lastNarrationResult = {
         status: 'failed', path: null, provider, model, externalTaskId: null,
         generatedAt: new Date().toISOString(), simulated: false, error: error.message,
