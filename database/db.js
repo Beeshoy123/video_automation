@@ -725,6 +725,19 @@ class Database {
     await this.executeQuery('UPDATE productions SET status = ? WHERE id = ?', [status, productionId]);
   }
 
+  async deleteProduction(productionId) {
+    await this.executeQuery('DELETE FROM publish_schedule WHERE production_id = ?', [productionId]);
+    await this.executeQuery('DELETE FROM production_scene_revisions WHERE production_id = ?', [productionId]);
+    await this.executeQuery('DELETE FROM production_scenes WHERE production_id = ?', [productionId]);
+    await this.executeQuery('DELETE FROM shorts_clips WHERE production_id = ?', [productionId]);
+    await this.executeQuery('DELETE FROM content_provenance WHERE production_id = ?', [productionId]);
+    await this.executeQuery('DELETE FROM content_reviews WHERE production_id = ?', [productionId]);
+    await this.executeQuery('DELETE FROM production_snapshots WHERE production_id = ?', [productionId]);
+    await this.executeQuery('DELETE FROM media_generation_tasks WHERE production_id = ?', [productionId]);
+    await this.executeQuery('DELETE FROM productions WHERE id = ?', [productionId]);
+    return true;
+  }
+
   async getProductionBundle(productionId) {
     const row = await this.getRow(
       `SELECT p.*, ps.strategy, ps.script, ps.thumbnail, ps.seo,

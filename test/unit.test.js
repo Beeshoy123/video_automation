@@ -8,6 +8,7 @@ const { TaskManager } = require('../utils/task-manager');
 const { buildConfig, migrateConfig } = require('../utils/config-schema');
 const { VoiceProviderRegistry } = require('../utils/voice-providers');
 const { CaptionService } = require('../utils/caption-service');
+const { FacelessStockEngine } = require('../utils/faceless-stock-engine');
 
 test('TaskManager runs jobs in concurrency order', async () => {
   const manager = new TaskManager({ maxConcurrent: 1, maxQueued: 2 });
@@ -56,4 +57,15 @@ test('CaptionService falls back when speech transcription fails', async () => {
   const result = await service.generate({ audioPath: 'audio.mp3', outputPath, fallback: async () => '1\n00:00:00,000 --> 00:00:01,000\nFallback\n' });
   assert.equal(result.method, 'script_timed');
   assert.match(await fs.readFile(outputPath, 'utf8'), /Fallback/);
+});
+
+test('FacelessStockEngine ranks portrait clips ahead of landscape results', () => {
+  const engine = new FacelessStockEngine({}, { logger: { warn() {}, info() {}, error() {} } });
+  const ranked = engine.rankVideoCandidates([
+    { assetId: 'landscape', width: 1280, height: 720, duration: 8 },
+    { assetId: 'portrait', width: 1080, height: 1920, duration: 8 },
+    { assetId: 'portrait-long', width: 1080, height: 1920, duration: 12 }
+  ]);
+
+  assert.deepEqual(ranked.map(item => item.assetId), ['portrait-long', 'portrait', 'landscape']);
 });

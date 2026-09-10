@@ -179,6 +179,8 @@ For release history, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Architecture
 
+For a repo-level map of the current system, responsibilities, and the recommended improvement order, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ```mermaid
 graph TD
     O[Autonomous Channel Operator] --> A[Research and Editorial Plan]

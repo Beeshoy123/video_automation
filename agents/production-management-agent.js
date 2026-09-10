@@ -486,7 +486,7 @@ class ProductionManagementAgent {
     try {
       const { script } = productionData;
       
-      // Generate visual assets using DALL-E
+      // Generate visual assets using the configured image provider.
       const visualPrompts = this.createVisualPromptsFromScript(script);
       const requestedMedia = String(productionData.strategy?.mediaAssets || '').split(',').map(value => value.trim()).filter(Boolean);
       const visualAssets = await mediaLibrary.resolveAssets(requestedMedia);
@@ -511,6 +511,9 @@ class ProductionManagementAgent {
       return visualAssets;
     } catch (error) {
       this.logger.error('AI video content generation failed:', error);
+
+      // Record the failure explicitly so later stages can fail closed instead of
+      // entering a brittle assembly path with missing visual assets.
       productionData.assets.video = {
         visualAssets: [],
         duration: productionData.estimatedDuration,
@@ -518,9 +521,11 @@ class ProductionManagementAgent {
         resolution: '1920x1080',
         fps: 30,
         generatedWith: 'local-fallback',
-        fallbackReason: error.message
+        fallbackReason: error.message,
+        simulated: true
       };
-      return await this.createVideoElements(productionData);
+
+      return [];
     }
   }
 
@@ -829,16 +834,26 @@ class ProductionManagementAgent {
     
     try {
       const finalVideoPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_final.mp4`);
+      const usableVisualAssets = Array.isArray(productionData.assets.video?.visualAssets)
+        ? productionData.assets.video.visualAssets.filter(Boolean)
+        : [];
       const narrationReady = await this.aiVideoGenerator.isUsableAudioFile(productionData.assets.audio?.path);
+
       if (!narrationReady && productionData.assets.audio?.intentionalSilence !== true) {
         this.logger.warn('Final assembly is blocked until narration succeeds or the operator explicitly confirms an intentional silent video.');
         return await this.simulateVideoAssembly(productionData, 'Narration is missing');
       }
 
+      if (!usableVisualAssets.length) {
+        const reason = productionData.assets.video?.fallbackReason || 'No usable visual assets were generated.';
+        this.logger.warn(`Final assembly is blocked because no usable visual assets were produced. Reason: ${reason}`);
+        return await this.simulateVideoAssembly(productionData, reason);
+      }
+
       // Use AI Video Generator to create the final video
       const producedPath = await this.aiVideoGenerator.generateVideo(
         productionData.script,
-        productionData.assets.video?.visualAssets || [],
+        usableVisualAssets,
         productionData.assets.audio.path,
         finalVideoPath,
         {

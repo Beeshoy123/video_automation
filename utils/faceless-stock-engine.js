@@ -144,6 +144,39 @@ class FacelessStockEngine {
     return results[0] || null;
   }
 
+  rankVideoCandidates(videos = [], query = '') {
+    return [...videos].sort((left, right) => {
+      const leftScore = this.scoreVideoCandidate(left, query);
+      const rightScore = this.scoreVideoCandidate(right, query);
+      if (rightScore !== leftScore) return rightScore - leftScore;
+      if ((right.duration || 0) !== (left.duration || 0)) return (right.duration || 0) - (left.duration || 0);
+      return String(right.assetId || '').localeCompare(String(left.assetId || ''));
+    });
+  }
+
+  scoreVideoCandidate(video = {}, query = '') {
+    const width = Number(video.width || 0);
+    const height = Number(video.height || 0);
+    const duration = Number(video.duration || 0);
+    const aspectRatio = width > 0 && height > 0 ? height / width : 0;
+    const pixelArea = width * height;
+    const queryTokens = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+    const haystack = [video.query || '', video.creator || '', video.sourcePage || ''].join(' ').toLowerCase();
+    const queryMatches = queryTokens.reduce((total, token) => total + (haystack.includes(token) ? 1 : 0), 0);
+
+    let score = 0;
+    if (height > width) score += 120;
+    if (height >= 1080 && width >= 720) score += 40;
+    if (aspectRatio > 1) {
+      const portraitDistance = Math.abs(aspectRatio - (9 / 16));
+      score += Math.max(0, 20 - portraitDistance * 100);
+    }
+    score += Math.min(25, Math.max(0, duration - 4) * 3);
+    score += Math.min(30, pixelArea / 200000);
+    score += queryMatches * 5;
+    return score;
+  }
+
   async searchVideos(query, excludedAssetIds = []) {
     const params = { orientation: 'portrait', size: 'medium', per_page: 5 };
     const cached = await this.mediaCache.readSearch('pexels', query, params);
@@ -174,6 +207,8 @@ class FacelessStockEngine {
         };
       })
       .filter(Boolean);
+
+    const rankedResults = this.rankVideoCandidates(results, query);
     if (!results.length) {
       const simplifiedQuery = String(query || '').trim().split(/\s+/).filter(Boolean).pop();
       if (simplifiedQuery && simplifiedQuery.toLowerCase() !== String(query || '').trim().toLowerCase()) {
@@ -181,8 +216,8 @@ class FacelessStockEngine {
         return this.searchVideos(simplifiedQuery, excludedAssetIds);
       }
     }
-    await this.mediaCache.writeSearch('pexels', query, params, results);
-    return results.filter(item => !excludedAssetIds.includes(String(item.assetId)));
+    await this.mediaCache.writeSearch('pexels', query, params, rankedResults);
+    return rankedResults.filter(item => !excludedAssetIds.includes(String(item.assetId)));
   }
 
   async downloadPair(scene, videoDir, sceneId) {

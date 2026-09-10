@@ -48,12 +48,62 @@
 
       <section id="overview-view" class="view active">
         <header class="studio-hero" aria-labelledby="studio-hero-title">
-          <div class="studio-hero-copy"><h1 id="studio-hero-title">Build. Review. Publish.</h1><p>Create faceless videos and Shorts with AI, while keeping every scene, source, approval, and publishing decision in view.</p></div>
-          <div class="studio-capabilities" aria-label="Studio capabilities">
-            <span><i>✦</i> Narrative stories</span>
-            <span><i>▣</i> Faceless stock</span>
-            <span><i>↗</i> Shorts repurposing</span>
-            <span><i>✓</i> Review gates</span>
+          <div class="studio-hero-copy">
+            <p class="eyebrow">AI VIDEO OPERATIONS</p>
+            <h1 id="studio-hero-title">Build. Review. Publish.</h1>
+            <p>Create faceless videos and Shorts with AI, while keeping every scene, source, approval, and publishing decision in view.</p>
+            <div class="studio-capabilities" aria-label="Studio capabilities">
+              <span><i>✦</i> Narrative stories</span>
+              <span><i>▣</i> Faceless stock</span>
+              <span><i>↗</i> Shorts repurposing</span>
+              <span><i>✓</i> Review gates</span>
+            </div>
+          </div>
+          <div class="studio-hero-preview" aria-label="Studio dashboard preview">
+            <div class="preview-shell">
+              <div class="preview-topbar">
+                <div class="preview-profile">
+                  <span class="preview-avatar">A</span>
+                  <div>
+                    <strong>Automation studio</strong>
+                    <small>Live pipeline overview</small>
+                  </div>
+                </div>
+                <span class="preview-pill success">Ready</span>
+              </div>
+              <div class="preview-metrics">
+                <div class="mini-panel highlight">
+                  <span>Videos generated</span>
+                  <strong>128</strong>
+                </div>
+                <div class="mini-panel">
+                  <span>Scheduled</span>
+                  <strong>12</strong>
+                </div>
+              </div>
+              <div class="preview-activity">
+                <article class="preview-card">
+                  <div class="preview-card-header">
+                    <span>Review queue</span>
+                    <strong>4</strong>
+                  </div>
+                  <ul>
+                    <li><i></i> Faceless Shorts approved</li>
+                    <li><i></i> Script revision queued</li>
+                  </ul>
+                </article>
+                <article class="preview-card preview-card-secondary">
+                  <div class="preview-card-header">
+                    <span>Next publish</span>
+                    <strong>Today</strong>
+                  </div>
+                  <div class="mini-trend">
+                    <span class="trend-line"></span>
+                    <small>+18% engagement</small>
+                  </div>
+                </article>
+              </div>
+            </div>
           </div>
         </header>
         <article id="ready-state-panel" class="ready-state-panel hidden"></article>
@@ -239,8 +289,10 @@
           <div id="retention-scenes" class="retention-scene-list"></div>
           <p class="callout retention-policy">Scene findings remain evidence only. They influence future scripts and pacing only after their recommendation is approved above; published videos are never edited automatically.</p>
         </article>
-        <article class="panel"><div class="panel-heading"><div><p class="eyebrow">TOP PERFORMERS</p><h2>What is working</h2></div></div><div id="top-performers" class="card-list"></div></article>
-        <article class="panel activation-panel"><div class="panel-heading"><div><p class="eyebrow">LOCAL ACTIVATION</p><h2>First-run journey</h2></div></div><p class="callout">Calculated locally from your database and video files. Nothing is transmitted unless anonymous telemetry is explicitly enabled.</p><div id="activation-list" class="timeline"></div></article>
+        <div class="analytics-lower-grid">
+          <article class="panel"><div class="panel-heading"><div><p class="eyebrow">TOP PERFORMERS</p><h2>What is working</h2></div></div><div id="top-performers" class="card-list"></div></article>
+          <article class="panel activation-panel"><div class="panel-heading"><div><p class="eyebrow">LOCAL ACTIVATION</p><h2>First-run journey</h2></div></div><p class="callout">Calculated locally from your database and video files. Nothing is transmitted unless anonymous telemetry is explicitly enabled.</p><div id="activation-list" class="timeline"></div></article>
+        </div>
       </section>
 
       <section id="readiness-view" class="view">

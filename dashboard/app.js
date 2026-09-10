@@ -429,11 +429,21 @@ function renderPipeline(items) {
   container.innerHTML = filtered.map(item => {
     const state = item.schedule_status || item.review_status || item.status;
     const next = nextAction(item);
-    return `<article class="pipeline-item" data-open-content="${escapeHTML(item.id)}">
-      <div class="pipeline-title"><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(item.topic || 'No topic recorded')} · ${formatDate(item.created_at)}</span></div>
-      <div class="pipeline-col"><span>State</span><strong>${statusChip(state)}</strong></div>
-      <div class="pipeline-col"><span>Quality</span><strong>${qualityScore(item.qualityChecks)} / 100</strong></div>
-      <button class="button secondary small">${escapeHTML(next)} →</button>
+    return `<article class="pipeline-item" data-open-content="${escapeHTML(item.id)}" style="display:flex; align-items:center; gap:16px;">
+      <div class="pipeline-header" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex:1 1 auto; min-width:0;">
+        <div class="pipeline-title" style="display:grid; gap:4px; min-width:0; flex:1 1 auto;">
+          <strong>${escapeHTML(item.title)}</strong>
+          <span>${escapeHTML(item.topic || 'No topic recorded')} · ${formatDate(item.created_at)}</span>
+        </div>
+        <div class="pipeline-actions" style="display:flex; align-items:center; gap:8px; margin-left:auto; flex-shrink:0;">
+          <button type="button" class="button secondary small">${escapeHTML(next)} →</button>
+          <button type="button" class="pipeline-delete" data-delete-production="${escapeHTML(item.id)}" aria-label="Delete ${escapeHTML(item.title)}" title="Delete record">🗑</button>
+        </div>
+      </div>
+      <div class="pipeline-meta" style="display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; flex:1 1 0; min-width:0;">
+        <div class="pipeline-col" style="display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:36px; min-width:110px; padding:8px 10px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.015);"><span>State</span><strong>${statusChip(state)}</strong></div>
+        <div class="pipeline-col" style="display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:36px; min-width:110px; padding:8px 10px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.015);"><span>Quality</span><strong>${qualityScore(item.qualityChecks)} / 100</strong></div>
+      </div>
     </article>`;
   }).join('');
 }
@@ -1416,6 +1426,20 @@ document.addEventListener('click', async event => {
   const go = event.target.closest('[data-go]');
   if (go) return switchView(go.dataset.go);
   if (event.target.closest('[data-close]')) return event.target.closest('dialog').close();
+
+  const deleteProduction = event.target.closest('[data-delete-production]');
+  if (deleteProduction) {
+    const productionId = deleteProduction.dataset.deleteProduction;
+    const currentItem = ui.state?.pipeline?.find(item => item.id === productionId);
+    const itemName = currentItem?.title || currentItem?.topic || 'this pipeline record';
+    if (!confirm(`Delete ${itemName} and its generated assets from the pipeline?`)) return;
+    try {
+      await mutate(`/api/content/${encodeURIComponent(productionId)}`, 'DELETE', {}, 'Pipeline record deleted.');
+    } catch (_error) {
+      // Mutate already shows the error toast.
+    }
+    return;
+  }
 
   const open = event.target.closest('[data-open-content]');
   if (open) {

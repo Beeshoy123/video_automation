@@ -21,6 +21,57 @@ This is primarily a Node.js project. The browser interface is served by the Expr
 - Git, if pushing the project to GitHub
 - Python 3.9 or newer only if Python tooling is needed. The verified machine has Python 3.9.13.
 
+## Verified Startup Checklist
+
+Use this exact order for a clean startup on this workspace:
+
+1. Install dependencies:
+
+```powershell
+cd G:\AI\youtube-automation-agent
+npm.cmd install
+```
+
+2. Configure local environment values in `.env` before starting the app. At minimum, set a valid `GEMINI_API_KEY` for AI text/TTS support, and optionally set `LOCAL_ONLY_MODE=true` if you want to run without YouTube OAuth.
+
+3. Optionally create and activate the local Python virtual environment if Python tooling is required:
+
+```powershell
+cd G:\AI\youtube-automation-agent
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+If PowerShell blocks the activation script, skip activation and use `./.venv/Scripts/python.exe` directly.
+
+4. Run the guided setup walkthrough:
+
+```powershell
+cd G:\AI\youtube-automation-agent
+npm.cmd run walkthrough
+```
+
+5. Start the dashboard:
+
+```powershell
+cd G:\AI\youtube-automation-agent
+npm.cmd start
+```
+
+If PowerShell still blocks `npm.ps1` or `npm.cmd` is unavailable in a particular shell, start the app directly with:
+
+```powershell
+cd G:\AI\youtube-automation-agent
+node index.js
+```
+
+6. Open the app:
+
+- Dashboard: `http://localhost:3456`
+- Health check: `http://localhost:3456/health`
+
+7. Leave the terminal running while using the dashboard. Stop the server with `Ctrl+C`.
+
 ## Install Node Dependencies
 
 PowerShell may block `npm.ps1`. Use `npm.cmd` instead:
