@@ -3,11 +3,10 @@ const Replicate = require('replicate');
 const { createReadStream } = require('fs');
 const fs = require('fs').promises;
 const path = require('path');
-const { pathToFileURL } = require('url');
 const axios = require('axios');
 const sharp = require('sharp');
 const { Logger } = require('./logger');
-const { runFFmpeg, checkFFmpeg, ffmpegInstallHint } = require('./ffmpeg');
+const { runFFmpeg, getMediaDuration, checkFFmpeg, ffmpegInstallHint } = require('./ffmpeg');
 const { MediaGenerationService } = require('./media-generation-service');
 const { VoiceProviderRegistry } = require('./voice-providers');
 
@@ -16,6 +15,7 @@ class AIVideoGenerator {
     this.logger = new Logger('AIVideoGenerator');
     const resolvedCredentials = credentials?.credentials || credentials || {};
     this.db = options.db || null;
+    this.getMediaDuration = options.getMediaDuration || getMediaDuration;
     this.lastVideoResult = null;
     this.lastNarrationResult = null;
     
@@ -359,7 +359,11 @@ class AIVideoGenerator {
     try {
       response = await this.gemini.models.generateContent({
         model,
-        contents: prompt
+        contents: prompt,
+        config: {
+          responseModalities: ['IMAGE'],
+          imageConfig: { aspectRatio: '16:9', imageSize: '1K' }
+        }
       });
     } catch (error) {
       const message = error?.message || String(error);
@@ -367,12 +371,23 @@ class AIVideoGenerator {
     }
 
     const parts = response.candidates?.[0]?.content?.parts || [];
-    const imagePart = parts.find(part => part.inlineData?.data);
+    const imageParts = parts.filter(part =>
+      part.inlineData?.data && (!part.inlineData.mimeType || part.inlineData.mimeType.startsWith('image/'))
+    );
+    const renderedImages = imageParts.filter(part => part.thought !== true);
+    const imagePart = (renderedImages.length ? renderedImages : imageParts).at(-1);
     if (!imagePart) {
       throw new Error('Gemini image generation returned no image data');
     }
 
-    await fs.writeFile(imagePath, Buffer.from(imagePart.inlineData.data, 'base64'));
+    const imageBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
+    const metadata = await sharp(imageBuffer, { failOn: 'error' }).metadata();
+    if (!metadata.width || !metadata.height) throw new Error('Gemini image generation returned an invalid image asset');
+    const output = sharp(imageBuffer, { failOn: 'error' });
+    const extension = path.extname(imagePath).toLowerCase();
+    if (extension === '.jpg' || extension === '.jpeg') await output.jpeg({ quality: 92 }).toFile(imagePath);
+    else if (extension === '.webp') await output.webp({ quality: 92 }).toFile(imagePath);
+    else await output.png().toFile(imagePath);
     return imagePath;
   }
 
@@ -609,7 +624,7 @@ class AIVideoGenerator {
       }
 
       const videoPath = outputPath.replace('.mp4', '_visual.mp4');
-      const duration = this.calculateScriptDuration(script);
+      const duration = await this.resolveSlideshowDuration(script, audioPath);
       await this.renderSlidesToVideo(stills, duration, videoPath, options);
 
       // Add audio
@@ -619,6 +634,15 @@ class AIVideoGenerator {
     } finally {
       await browser.close().catch(() => {});
       await this.cleanupDirectory(slidesDir);
+    }
+  }
+
+  async resolveSlideshowDuration(script, audioPath) {
+    try {
+      return (await this.getMediaDuration(audioPath)) + 0.5;
+    } catch (error) {
+      this.logger.warn(`Could not read narration duration, falling back to word-count estimate: ${error.message}`);
+      return this.calculateScriptDuration(script);
     }
   }
 
@@ -643,7 +667,8 @@ class AIVideoGenerator {
     }
 
     const fade = 0.5;
-    const perSlide = Math.max(2, totalDuration / stills.length);
+    const overlapDuration = options.transitionMode === 'cut' ? 0 : fade * (stills.length - 1);
+    const perSlide = Math.max(2, (totalDuration + overlapDuration) / stills.length);
 
     const args = ['-y'];
     for (const still of stills) {
@@ -687,6 +712,7 @@ class AIVideoGenerator {
 
   async filterImageAssets(visualAssets = []) {
     const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+    const mimeTypes = { jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
     const images = [];
 
     for (const asset of visualAssets) {
@@ -695,10 +721,14 @@ class AIVideoGenerator {
       }
 
       try {
-        await fs.access(asset);
-        images.push(pathToFileURL(asset).href);
-      } catch (error) {
-        // Skip missing files
+        const imageBuffer = await fs.readFile(asset);
+        const metadata = await sharp(imageBuffer, { failOn: 'error' }).metadata();
+        const mimeType = mimeTypes[metadata.format];
+        if (mimeType && metadata.width && metadata.height) {
+          images.push(`data:${mimeType};base64,${imageBuffer.toString('base64')}`);
+        }
+      } catch (_error) {
+        // Skip missing or invalid image files.
       }
     }
 

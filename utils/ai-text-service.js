@@ -132,30 +132,26 @@ class AITextService {
       temperature,
     };
 
-    try {
-      // Newer OpenAI models (gpt-5.x and later) reject the legacy max_tokens
-      // parameter with a 400 error and require max_completion_tokens instead.
-      const response = await this.client.chat.completions.create({
-        ...params,
-        max_completion_tokens: maxTokens,
-      });
-      return this._extractContent(response);
-    } catch (error) {
-      // Older models and some providers reject max_completion_tokens with a 400;
-      // retry the same request using the legacy max_tokens spelling.
-      if (
-        error &&
-        error.status === 400 &&
-        /max(_completion)?_tokens/i.test(error.message || '')
-      ) {
-        const response = await this.client.chat.completions.create({
-          ...params,
-          max_tokens: maxTokens,
-        });
-        return this._extractContent(response);
+    let lastError;
+    for (const tokenKey of ['max_completion_tokens', 'max_tokens']) {
+      for (const includeTemperature of [true, false]) {
+        const request = { ...params, [tokenKey]: maxTokens };
+        if (!includeTemperature) delete request.temperature;
+        try {
+          const response = await this.client.chat.completions.create(request);
+          return this._extractContent(response);
+        } catch (error) {
+          lastError = error;
+          const message = error?.message || '';
+          const unsupportedTemperature = error?.status === 400 && /temperature/i.test(message) && /(unsupported|does not support|only supports? the default|only the default)/i.test(message);
+          const unsupportedTokenParameter = error?.status === 400 && /max(_completion)?_tokens/i.test(message);
+          if (unsupportedTemperature && includeTemperature) continue;
+          if (unsupportedTokenParameter && tokenKey === 'max_completion_tokens') break;
+          throw error;
+        }
       }
-      throw error;
     }
+    throw lastError;
   }
 
   _extractContent(response) {

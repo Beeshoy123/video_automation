@@ -12,8 +12,10 @@ const { FacelessStockEngine } = require('../utils/faceless-stock-engine');
 const { ScriptWriterAgent } = require('../agents/script-writer-agent');
 const { MediaGenerationService } = require('../utils/media-generation-service');
 const { AIVideoGenerator } = require('../utils/ai-video-generator');
+const { AITextService } = require('../utils/ai-text-service');
 const { PlatformExportService } = require('../utils/platform-export-service');
-const { checkFFmpeg, runFFmpeg } = require('../utils/ffmpeg');
+const { checkFFmpeg, getMediaDuration, runFFmpeg } = require('../utils/ffmpeg');
+const sharp = require('sharp');
 
 test('TaskManager runs jobs in concurrency order', async () => {
   const manager = new TaskManager({ maxConcurrent: 1, maxQueued: 2 });
@@ -79,6 +81,60 @@ test('ScriptWriterAgent fails loudly when no AI provider is configured', async (
     () => agent.generateScript(strategy),
     /No AI text provider configured for script generation/
   );
+});
+
+test('AITextService retries without unsupported temperature and token parameters', async () => {
+  const service = new AITextService();
+  const calls = [];
+  service.gemini = null;
+  service.model = 'compatible-model';
+  service.client = { chat: { completions: { create: async request => {
+    calls.push(request);
+    if (request.max_completion_tokens) {
+      const error = new Error('max_completion_tokens is unsupported');
+      error.status = 400;
+      throw error;
+    }
+    if (request.temperature !== undefined) {
+      const error = new Error('temperature only supports the default value');
+      error.status = 400;
+      throw error;
+    }
+    return { choices: [{ message: { content: 'usable response' } }] };
+  } } } };
+
+  assert.equal(await service.generateText('test prompt', { maxTokens: 64, temperature: 0.2 }), 'usable response');
+  assert.deepEqual(calls.map(request => [Boolean(request.max_completion_tokens), Boolean(request.max_tokens), request.temperature]), [
+    [true, false, 0.2],
+    [false, true, 0.2],
+    [false, true, undefined]
+  ]);
+});
+
+test('AIVideoGenerator uses narration duration and falls back to script estimate', async () => {
+  const generator = new AIVideoGenerator({}, {
+    getMediaDuration: async audioPath => {
+      if (audioPath === 'unreadable.mp3') throw new Error('probe failed');
+      return 12;
+    },
+    logger: { warn() {}, info() {}, error() {} }
+  });
+  assert.equal(await generator.resolveSlideshowDuration({}, 'narration.mp3'), 12.5);
+  const script = { hook: { text: 'one two three' } };
+  assert.equal(await generator.resolveSlideshowDuration(script, 'unreadable.mp3'), generator.calculateScriptDuration(script));
+});
+
+test('AIVideoGenerator converts valid local images to browser-safe data URLs', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-image-assets-'));
+  const imagePath = path.join(directory, 'generated.png');
+  const invalidPath = path.join(directory, 'invalid.png');
+  await sharp({ create: { width: 2, height: 2, channels: 3, background: '#334455' } }).png().toFile(imagePath);
+  await fs.writeFile(invalidPath, 'not an image');
+  const generator = new AIVideoGenerator({}, { logger: { warn() {}, info() {}, error() {} } });
+
+  const imageAssets = await generator.filterImageAssets([imagePath, invalidPath]);
+  assert.equal(imageAssets.length, 1);
+  assert.match(imageAssets[0], /^data:image\/png;base64,/);
 });
 
 test('MediaGenerationService refuses silent slideshow fallback when a paid provider is selected', async () => {
@@ -191,6 +247,8 @@ test('PlatformExportService renders valid platform-specific vertical videos and 
     '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-shortest',
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', sourcePath
   ]);
+  const sourceDuration = await getMediaDuration(sourcePath);
+  assert.ok(sourceDuration >= 0.9 && sourceDuration <= 1.5, `unexpected probed duration: ${sourceDuration}`);
   await fs.writeFile(captionsPath, '1\n00:00:00,000 --> 00:00:01,000\nTest caption\n', 'utf8');
 
   const service = new PlatformExportService({ width: 180, height: 320 });
