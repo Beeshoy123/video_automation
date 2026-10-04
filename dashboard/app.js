@@ -1910,6 +1910,7 @@ async function openGenerateDialog() {
   await loadVoiceOptions();
   setupGenerateWizard(true);
   $('#generate-dialog').showModal();
+  $('#generate-form .form-section:not(.wizard-hidden) input:not([type="file"]), #generate-form .form-section:not(.wizard-hidden) select, #generate-form .form-section:not(.wizard-hidden) textarea')?.focus({ preventScroll: true });
 }
 
 function setupGenerateWizard(reset = false) {
@@ -1919,9 +1920,19 @@ function setupGenerateWizard(reset = false) {
   if (!form || !sections.length || !footer) return;
   if (!form.dataset.wizardReady) {
     form.dataset.wizardReady = 'true';
-    footer.insertAdjacentHTML('afterbegin', '<div class="wizard-controls"><button type="button" class="button secondary small" data-wizard-back>← Back</button><span class="wizard-progress" data-wizard-progress></span><button type="button" class="button primary small" data-wizard-next>Next →</button></div>');
+    footer.insertAdjacentHTML('afterbegin', '<div class="wizard-controls"><button type="button" class="button secondary small" data-wizard-back>← Back</button><div class="wizard-progress-group"><span class="wizard-progress" data-wizard-progress aria-live="polite"></span><div class="wizard-meter" role="progressbar" aria-label="Generation setup progress" aria-valuemin="1"><span data-wizard-meter-fill></span></div></div><button type="button" class="button primary small" data-wizard-next>Next →</button></div>');
     footer.querySelector('[data-wizard-back]').addEventListener('click', () => moveGenerateWizard(-1));
     footer.querySelector('[data-wizard-next]').addEventListener('click', () => moveGenerateWizard(1));
+    form.addEventListener('keydown', event => {
+      const target = event.target;
+      const advancesOnEnter = target?.tagName === 'INPUT' && ['text', 'number', 'url', 'search'].includes(target.type);
+      const currentStep = Number(form.dataset.wizardStep || 0);
+      const currentSections = Array.from(form.querySelectorAll('.create-form-content > .form-section'));
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && advancesOnEnter && currentStep < currentSections.length - 1) {
+        event.preventDefault();
+        moveGenerateWizard(1);
+      }
+    });
   }
   if (reset || !form.dataset.wizardStep) form.dataset.wizardStep = '0';
   renderGenerateWizard(sections);
@@ -1935,17 +1946,44 @@ function renderGenerateWizard(sections = Array.from($('#generate-form')?.querySe
   const back = form?.querySelector('[data-wizard-back]');
   const next = form?.querySelector('[data-wizard-next]');
   const progress = form?.querySelector('[data-wizard-progress]');
+  const meter = form?.querySelector('.wizard-meter');
+  const meterFill = form?.querySelector('[data-wizard-meter-fill]');
+  const submit = form?.querySelector('.create-studio-footer button[type="submit"]');
+  const title = sections[index]?.querySelector('.form-section-heading h3')?.textContent.trim();
   if (back) back.disabled = index === 0;
   if (next) next.classList.toggle('hidden', index === sections.length - 1);
-  if (progress) progress.textContent = `Step ${index + 1} of ${sections.length}`;
+  if (submit) submit.classList.toggle('hidden', index !== sections.length - 1);
+  if (progress) {
+    progress.textContent = `Step ${index + 1} of ${sections.length}`;
+    progress.setAttribute('aria-label', `${title || 'Setup'}, step ${index + 1} of ${sections.length}`);
+  }
+  if (meter) {
+    meter.setAttribute('aria-valuemax', String(sections.length));
+    meter.setAttribute('aria-valuenow', String(index + 1));
+  }
+  if (meterFill) meterFill.style.width = `${((index + 1) / sections.length) * 100}%`;
+}
+
+function validateGenerateWizardStep(section) {
+  const invalidField = Array.from(section.querySelectorAll('input, select, textarea'))
+    .find(field => !field.checkValidity());
+  if (!invalidField) return true;
+  invalidField.reportValidity();
+  invalidField.focus();
+  return false;
 }
 
 function moveGenerateWizard(delta) {
   const form = $('#generate-form');
   const sections = Array.from(form?.querySelectorAll('.create-form-content > .form-section') || []);
   if (!form || !sections.length) return;
-  form.dataset.wizardStep = String(Number(form.dataset.wizardStep || 0) + delta);
+  const currentIndex = Number(form.dataset.wizardStep || 0);
+  if (delta > 0 && !validateGenerateWizardStep(sections[currentIndex])) return;
+  form.dataset.wizardStep = String(currentIndex + delta);
   renderGenerateWizard(sections);
+  sections[Number(form.dataset.wizardStep)]
+    ?.querySelector('input:not([type="file"]), select, textarea, button:not(.close-button)')
+    ?.focus({ preventScroll: true });
 }
 $('#generate-button')?.addEventListener('click', openGenerateDialog);
 $('#overview-create-button').addEventListener('click', openGenerateDialog);
@@ -2382,6 +2420,12 @@ $('#resume-operator-run').addEventListener('click', async event => {
 $('#generate-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
+  const wizardSections = Array.from(form.querySelectorAll('.create-form-content > .form-section'));
+  const wizardStep = Number(form.dataset.wizardStep || 0);
+  if (wizardSections.length && wizardStep < wizardSections.length - 1) {
+    moveGenerateWizard(1);
+    return;
+  }
   if (form.dataset.submitting === 'true') return;
   const values = Object.fromEntries(new FormData(form));
   values.mediaAssets = Array.from(form.elements.mediaAssets?.selectedOptions || []).map(option => option.value).join(',');
