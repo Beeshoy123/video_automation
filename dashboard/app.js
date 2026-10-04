@@ -122,7 +122,7 @@ function renderDashboard() {
   $('#automation-toggle').textContent = state.system.automationPaused ? 'Resume automation' : 'Pause automation';
   $('#automation-toggle').disabled = state.system.setupRequired;
   $('#generate-button')?.setAttribute('aria-disabled', String(state.system.setupRequired));
-  $('#top-generate-button').disabled = state.system.setupRequired;
+  $('#generate-button').disabled = state.system.setupRequired;
   $('#review-badge').textContent = reviews.length;
   $('#review-badge').classList.toggle('hidden', reviews.length === 0);
   const notificationCount = (state.notifications || []).length || (state.events || []).filter(event => event.status === 'error').length;
@@ -763,7 +763,22 @@ $('#profile-form [name="videoProvider"]')?.addEventListener('change', event => {
 
 function switchView(view) {
   ui.currentView = view;
+  const viewMeta = {
+    overview: ['OPERATOR OVERVIEW', 'Know what happens next.'],
+    operator: ['AUTONOMOUS OPERATOR', 'Give Lumen the strategy.'],
+    pipeline: ['CONTENT OPERATIONS', 'From idea to published.'],
+    campaign: ['CAMPAIGN CLIPS', 'Build a campaign-ready video.'],
+    calendar: ['EDITORIAL PLANNING', 'Plan before you generate.'],
+    analytics: ['PERFORMANCE', 'Turn results into the next move.'],
+    readiness: ['PRODUCTION READINESS', 'Verify before autonomy runs.'],
+    settings: ['CHANNEL GUARDRAILS', 'Make every agent sound like you.']
+  };
   const titles = { overview: 'Overview', pipeline: 'Content pipeline', campaign: 'Campaign Clip Builder', calendar: 'Calendar & ideas', operator: 'Niche & ideas', readiness: 'Pipeline health', analytics: 'Analytics', settings: 'Channel setup' };
+  const [eyebrowText, titleText] = viewMeta[view] || viewMeta.overview;
+  const eyebrow = $('#view-eyebrow');
+  const title = $('#view-title');
+  if (eyebrow) eyebrow.textContent = eyebrowText;
+  if (title) title.textContent = titleText;
   const workspaceTitle = $('#workspace-view-title');
   if (workspaceTitle) workspaceTitle.textContent = view === 'overview' ? ui.overviewStatus : titles[view] || 'Overview';
   if (ui.state) renderLiveStageBar(ui.state.jobs || [], ui.state.pipeline || []);
@@ -1877,13 +1892,15 @@ function moveGenerateWizard(delta) {
 }
 $('#generate-button')?.addEventListener('click', openGenerateDialog);
 $('#overview-create-button').addEventListener('click', openGenerateDialog);
-$('#top-generate-button').addEventListener('click', openGenerateDialog);
-$('#global-search-button').addEventListener('click', () => {
+$('#global-search-button')?.addEventListener('click', () => {
+  const dialog = $('#global-search-dialog');
+  const input = $('#global-search-input');
+  if (!dialog || !input) return;
   renderGlobalSearch();
-  $('#global-search-dialog').showModal();
-  $('#global-search-input').focus();
+  dialog.showModal();
+  input.focus();
 });
-$('#global-search-input').addEventListener('input', event => renderGlobalSearch(event.target.value));
+$('#global-search-input')?.addEventListener('input', event => renderGlobalSearch(event.target.value));
 $('#notifications-button').addEventListener('click', () => {
   switchView('overview');
   document.querySelector('#notification-list')?.scrollIntoView({ behavior: 'smooth', block: 'center' });

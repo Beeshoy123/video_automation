@@ -44,7 +44,13 @@ module.exports = [
         window: 'readonly',
         document: 'readonly',
         Event: 'readonly',
-        Blob: 'readonly'
+        Blob: 'readonly',
+        matchMedia: 'readonly',
+        performance: 'readonly',
+        requestAnimationFrame: 'readonly',
+        cancelAnimationFrame: 'readonly',
+        IntersectionObserver: 'readonly',
+        PointerEvent: 'readonly'
       }
     },
     rules: {

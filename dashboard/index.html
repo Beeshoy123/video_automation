@@ -1,32 +1,35 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="preboot">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Video Automation Studio</title>
+  <meta name="theme-color" content="#06080c">
+  <title>YouTube Automation Studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ff4d5e'/%3E%3Cpath d='M12 9.5v13l11-6.5z' fill='white'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <div class="aurora" aria-hidden="true"></div>
+  <div class="spotlight" aria-hidden="true"></div>
   <div class="app-shell">
     <aside class="sidebar">
-      <a class="brand" href="#overview" aria-label="Video Automation Studio home">
-        <span class="brand-mark">▶</span>
-        <span><strong id="brand-name">Video Automation Studio</strong></span>
+      <a class="brand" href="#overview" aria-label="YouTube Automation Studio home">
+        <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>
+        <span><strong id="brand-name">Automation Studio</strong><small>Operator console</small></span>
       </a>
+      <p class="sidebar-label" aria-hidden="true">Workspace</p>
       <nav aria-label="Main navigation">
-        <div class="nav-group nav-all-items">
-          <button class="nav-item active" data-view="overview"><span>⌂</span> Overview</button>
-          <button class="nav-item" data-view="pipeline"><span>≋</span> Pipeline <b id="review-badge" class="badge hidden">0</b></button>
-          <button class="nav-item" data-view="campaign"><span>▣</span> Campaign clips</button>
-          <button class="nav-item" data-view="calendar"><span>□</span> Calendar &amp; ideas</button>
-          <button class="nav-item" data-view="operator"><span>◎</span> Niche &amp; ideas</button>
-          <button class="nav-item" data-view="readiness"><span>✓</span> Pipeline health</button>
-          <button class="nav-item" data-view="analytics"><span>⌁</span> Analytics</button>
-          <button class="nav-item" data-view="settings"><span>⚙</span> Channel setup</button>
-          
-        
-        </div>
+        <button class="nav-item active" data-view="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7.5" height="9.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="5.5" rx="1.5"/><rect x="13.5" y="11.5" width="7.5" height="9.5" rx="1.5"/><rect x="3" y="15.5" width="7.5" height="5.5" rx="1.5"/></svg> Overview</button>
+        <button class="nav-item" data-view="operator"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></svg> Autonomous operator</button>
+        <button class="nav-item" data-view="pipeline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M4 12h16M4 18h7"/><circle cx="17.5" cy="6" r="2"/><circle cx="14.5" cy="18" r="2"/></svg> Pipeline <b id="review-badge" class="badge hidden">0</b></button>
+        <button class="nav-item" data-view="calendar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4M7.5 13.5h3v3h-3z"/></svg> Calendar & ideas</button>
+        <button class="nav-item" data-view="analytics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 20.5h17"/><path d="M6.5 20V11M11 20V4.5M15.5 20v-7M20 20V8.5"/></svg> Analytics</button>
+        <button class="nav-item" data-view="readiness"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.8l7.5 3v6c0 4.8-3.2 8.2-7.5 9.4-4.3-1.2-7.5-4.6-7.5-9.4v-6z"/><path d="M8.8 12.2l2.3 2.3 4.4-4.6"/></svg> Production readiness</button>
+        <button class="nav-item" data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06A1.7 1.7 0 0015 19.4a1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09A1.7 1.7 0 009 19.4a1.7 1.7 0 00-1.87.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09A1.7 1.7 0 004.6 9a1.7 1.7 0 00-.33-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06A1.7 1.7 0 009 4.6a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.51 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06A1.7 1.7 0 0019.4 9c.28.66.9 1.05 1.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.51 1z"/></svg> Channel setup</button>
       </nav>
       <div class="sidebar-footer">
         <div class="system-pill"><i id="system-dot"></i><span id="system-label">Connecting…</span></div>
@@ -36,13 +39,15 @@
 
     <main>
       <div id="loading" class="loading-bar"></div>
-      <div id="toast" class="toast hidden" role="status"></div>
-      <header class="workspace-topbar">
-        <div class="workspace-context"><div id="live-stage-bar" class="live-stage-bar" aria-label="Video production status"><span id="live-status-label">Ready</span><div id="live-stage-steps" class="live-stage-steps" aria-label="Video production stages"><span data-stage="brief">Brief</span><i></i><span data-stage="script">Script</span><i></i><span data-stage="visuals">Visuals</span><i></i><span data-stage="voice">Voice</span><i></i><span data-stage="assembly">Assembly</span><i></i><span data-stage="review">Review</span></div></div></div>
-        <div class="workspace-actions">
-          <button id="global-search-button" class="icon-button" type="button" title="Search workspace" aria-label="Search workspace">⌕</button>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="view-eyebrow">OPERATOR OVERVIEW</p>
+          <h1 id="view-title">Know what happens next.</h1>
+        </div>
+        <div class="top-actions">
+          <button id="refresh-button" class="icon-button" title="Refresh dashboard" aria-label="Refresh dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 11-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>
           <button id="notifications-button" class="icon-button notification-button" type="button" title="Open notifications" aria-label="Open notifications"><span aria-hidden="true">♢</span><b id="notifications-badge" class="notification-dot hidden"></b></button>
-          <button id="top-generate-button" class="button primary" type="button">＋ Generate video</button>
+          <button id="generate-button" class="button primary">＋ Create video</button>
         </div>
       </header>
 
@@ -455,5 +460,6 @@
   </dialog>
 
   <script src="/app.js" defer></script>
+  <script src="/enhance.js" defer></script>
 </body>
 </html>
