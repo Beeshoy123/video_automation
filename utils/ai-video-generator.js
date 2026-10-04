@@ -447,10 +447,18 @@ class AIVideoGenerator {
       this.lastVideoResult = { requestedProvider: 'slideshow', actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'slideshow', generatedSeconds: 0, tasks: [], scenes: [] };
       return produced;
     } catch (error) {
+      const reason = error && error.message ? error.message : String(error);
+      const settings = this.mediaGeneration ? await this.mediaGeneration.settings().catch(() => ({ provider: 'slideshow', mode: 'hybrid' })) : { provider: 'slideshow', mode: 'hybrid' };
+      const allowSlideshowFallback = settings.provider === 'slideshow' || settings.mode === 'slideshow';
+
+      if (!allowSlideshowFallback) {
+        this.logger.error(`Video provider generation failed for selected provider "${settings.provider}": ${reason}`, error);
+        throw new Error(`Selected video provider "${settings.provider}" failed and slideshow fallback is disabled. Configure the provider or switch VIDEO_PROVIDER=slideshow. Original error: ${reason}`);
+      }
+
       // The Logger's console line only shows the message string, so put the real
       // reason inline. Previously the stack alone went to the file transport and
       // the console printed "Video generation failed:" with no detail.
-      const reason = error && error.message ? error.message : String(error);
       this.logger.error(`Video provider generation failed; using the local slideshow: ${reason}`, error);
       try {
         const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath, options);
@@ -697,7 +705,50 @@ class AIVideoGenerator {
     return images;
   }
 
+  cleanSlideText(text, maxLength = 90) {
+    return String(text || '')
+      .replace(/\s+/g, ' ')
+      .replace(/\s*([,:;.!?])\s*/g, '$1 ')
+      .trim()
+      .slice(0, maxLength)
+      .trim();
+  }
+
+  compressSlideText(text, maxWords = 7, maxLength = 90) {
+    const normalized = this.cleanSlideText(text || '', maxLength * 2)
+      .replace(/\s*([,:;.!?])\s*/g, '$1 ')
+      .trim();
+
+    if (!normalized) return '';
+
+    const words = normalized.split(/\s+/);
+    if (words.length <= maxWords) {
+      return normalized;
+    }
+
+    const compressed = words.slice(0, maxWords).join(' ').replace(/[,:;.!?]+$/, '');
+    return `${compressed}…`;
+  }
+
+  getVisualCropStyle(asset = '') {
+    const normalized = String(asset).toLowerCase();
+
+    if (/(portrait|vertical|tall|story|short)/.test(normalized)) {
+      return 'object-position: 50% 22%; transform: scale(1.08);';
+    }
+
+    if (/(landscape|wide|banner|panorama)/.test(normalized)) {
+      return 'object-position: 50% 38%; transform: scale(1.04);';
+    }
+
+    return 'object-position: 50% 50%; transform: scale(1.07);';
+  }
+
   createSlideshowHTML(script, visualAssets) {
+    const title = this.cleanSlideText(script.title || 'New Story', 56);
+    const hero = this.compressSlideText(script.hook?.text || script.introduction?.topicIntro || 'A cinematic story begins here.', 7, 90);
+    const hasVisual = Array.isArray(visualAssets) && visualAssets.length > 0;
+
     return `
 <!DOCTYPE html>
 <html>
@@ -708,131 +759,156 @@ class AIVideoGenerator {
             padding: 0;
             width: 1920px;
             height: 1080px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 40%, #0f172a 100%);
             font-family: 'Arial', sans-serif;
             overflow: hidden;
         }
-        
+
         .slide {
             position: absolute;
-            width: 100%;
-            height: 100%;
+            inset: 0;
             display: flex;
             align-items: center;
             justify-content: center;
             opacity: 0;
-            transition: opacity 2s ease-in-out;
+            transition: opacity 1.5s ease-in-out;
         }
-        
+
         .slide.active {
             opacity: 1;
         }
-        
-        .content {
-            text-align: center;
-            color: white;
-            max-width: 80%;
-        }
-        
-        h1 {
-            font-size: 72px;
-            margin-bottom: 30px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-        }
-        
-        h2 {
-            font-size: 48px;
-            margin-bottom: 20px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-        }
-        
-        p {
-            font-size: 36px;
-            line-height: 1.4;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-        }
-        
+
         .background-image {
             position: absolute;
-            top: 0;
-            left: 0;
+            inset: 0;
             width: 100%;
             height: 100%;
             object-fit: cover;
-            opacity: 0.3;
-            z-index: -1;
+            object-position: 50% 50%;
+            transform-origin: center center;
+            animation: gentlePan 18s ease-in-out infinite alternate;
+            filter: saturate(1.1) contrast(1.06) brightness(0.7);
+            opacity: 0.9;
+            z-index: 0;
         }
-        
+
+        .dark-overlay {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, rgba(15, 23, 42, 0.18), rgba(15, 23, 42, 0.72));
+            z-index: 1;
+        }
+
+        .content {
+            position: relative;
+            z-index: 2;
+            align-self: flex-end;
+            margin: 0 0 56px 56px;
+            text-align: left;
+            width: min(62%, 760px);
+            color: white;
+            padding: 18px 24px 20px 24px;
+            border-left: 2px solid rgba(255,255,255,0.32);
+            background: rgba(15, 23, 42, 0.22);
+            backdrop-filter: blur(6px);
+            box-shadow: 0 12px 44px rgba(15, 23, 42, 0.18);
+        }
+
+        .eyebrow {
+            display: inline-block;
+            font-size: 12px;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.8);
+            margin-bottom: 10px;
+        }
+
+        h1 {
+            font-size: clamp(26px, 2.4vw, 52px);
+            margin: 0 0 10px;
+            line-height: 1.02;
+            letter-spacing: -0.04em;
+            text-shadow: 0 8px 24px rgba(15, 23, 42, 0.35);
+        }
+
+        h2 {
+            font-size: clamp(22px, 1.8vw, 38px);
+            margin: 0 0 8px;
+            line-height: 1.08;
+            text-shadow: 0 8px 24px rgba(15, 23, 42, 0.35);
+        }
+
+        p {
+            margin: 0;
+            font-size: clamp(14px, 1.1vw, 20px);
+            line-height: 1.45;
+            color: rgba(255,255,255,0.9);
+            max-width: 42ch;
+        }
+
         .particles {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            inset: 0;
             overflow: hidden;
-            z-index: -1;
+            z-index: 0;
         }
-        
+
         .particle {
             position: absolute;
-            background: rgba(255,255,255,0.8);
+            background: rgba(255,255,255,0.68);
             border-radius: 50%;
-            animation: float 6s ease-in-out infinite;
+            animation: float 8s ease-in-out infinite;
         }
-        
+
         @keyframes float {
-            0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(-20px); }
+            0%, 100% { transform: translateY(0px); opacity: 0.3; }
+            50% { transform: translateY(-24px); opacity: 0.8; }
+        }
+
+        @keyframes gentlePan {
+            0% { transform: scale(1.04) translate3d(0, 0, 0); }
+            100% { transform: scale(1.12) translate3d(-1.5%, -1%, 0); }
         }
     </style>
 </head>
 <body>
     <div class="particles"></div>
-    
-    <!-- Title Slide -->
+
     <div class="slide active">
-        ${visualAssets[0] ? `<img class="background-image" src="${visualAssets[0]}" />` : ''}
+        ${hasVisual ? `<img class="background-image" src="${visualAssets[0]}" style="${this.getVisualCropStyle(visualAssets[0])}" />` : ''}
+        <div class="dark-overlay"></div>
         <div class="content">
-            <h1>${script.title}</h1>
-            <p>Ethereal Dreamscript</p>
+            <div class="eyebrow">Cinematic story</div>
+            <h1>${title}</h1>
+            ${hero ? `<p>${hero}</p>` : ''}
         </div>
     </div>
-    
+
     ${this.generateContentSlides(script, visualAssets).join('')}
-    
-    <!-- Subscribe Slide -->
-    <div class="slide">
-        <div class="content">
-            <h2>✨ Subscribe for More Stories ✨</h2>
-            <p>New content daily at 2:00 PM</p>
-        </div>
-    </div>
-    
+
     <script>
-        // Create floating particles
         function createParticles() {
             const container = document.querySelector('.particles');
-            for (let i = 0; i < 20; i++) {
+            for (let i = 0; i < 22; i++) {
                 const particle = document.createElement('div');
                 particle.className = 'particle';
                 particle.style.left = Math.random() * 100 + '%';
                 particle.style.top = Math.random() * 100 + '%';
-                particle.style.width = (Math.random() * 4 + 2) + 'px';
+                particle.style.width = (Math.random() * 7 + 2) + 'px';
                 particle.style.height = particle.style.width;
-                particle.style.animationDelay = Math.random() * 6 + 's';
+                particle.style.animationDelay = Math.random() * 8 + 's';
                 container.appendChild(particle);
             }
         }
-        
-        let currentSlide = 0;
+
         const slides = document.querySelectorAll('.slide');
-        
+        let currentSlide = 0;
         function advanceAnimation() {
             slides[currentSlide].classList.remove('active');
             currentSlide = (currentSlide + 1) % slides.length;
             slides[currentSlide].classList.add('active');
         }
-        
+
         window.advanceAnimation = advanceAnimation;
         createParticles();
     </script>
@@ -842,43 +918,45 @@ class AIVideoGenerator {
 
   generateContentSlides(script, visualAssets) {
     const slides = [];
-    
+
     if (script.mainContent && script.mainContent.sections) {
       script.mainContent.sections.forEach((section, index) => {
-        const assetIndex = Math.min(index + 1, visualAssets.length - 1);
-        
+        const assetIndex = Math.min(index + 1, Math.max(0, visualAssets.length - 1));
+        const title = this.cleanSlideText(section.title || `Scene ${index + 1}`, 48);
+        const summary = this.compressSlideText(this.formatSectionContent(section), 7, 72);
+
         slides.push(`
         <div class="slide">
-            ${visualAssets[assetIndex] ? `<img class="background-image" src="${visualAssets[assetIndex]}" />` : ''}
+            ${visualAssets[assetIndex] ? `<img class="background-image" src="${visualAssets[assetIndex]}" style="${this.getVisualCropStyle(visualAssets[assetIndex])}" />` : ''}
+            <div class="dark-overlay"></div>
             <div class="content">
-                <h2>${section.title}</h2>
-                ${this.formatSectionContent(section)}
+                <div class="eyebrow">Scene ${index + 1}</div>
+                <h2>${title}</h2>
+                ${summary ? `<p>${summary}</p>` : ''}
             </div>
         </div>`);
       });
     }
-    
+
     return slides;
   }
 
   formatSectionContent(section) {
     if (section.items && Array.isArray(section.items)) {
-      return section.items.slice(0, 3).map(item => 
-        `<p>${item.number}. ${item.title}</p>`
-      ).join('');
+      const labels = section.items.slice(0, 2).map(item => this.cleanSlideText(item.title || item.number || '', 24));
+      return labels.filter(Boolean).join(' • ');
     }
-    
+
     if (section.steps && Array.isArray(section.steps)) {
-      return section.steps.slice(0, 3).map(step => 
-        `<p>${step.title}</p>`
-      ).join('');
+      const labels = section.steps.slice(0, 2).map(step => this.cleanSlideText(step.title || '', 24));
+      return labels.filter(Boolean).join(' • ');
     }
-    
+
     if (typeof section.content === 'string') {
-      return `<p>${section.content.slice(0, 200)}${section.content.length > 200 ? '...' : ''}</p>`;
+      return this.cleanSlideText(section.content, 60);
     }
-    
-    return '<p>Content coming soon...</p>';
+
+    return 'Story movement';
   }
 
   calculateScriptDuration(script) {

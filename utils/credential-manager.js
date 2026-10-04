@@ -77,7 +77,7 @@ class CredentialManager {
         type: 'input',
         name: 'redirectUri',
         message: 'Enter your redirect URI:',
-        default: 'http://localhost:8080/oauth2callback'
+        default: 'http://localhost:8080/auth/callback'
       }
     ]);
 

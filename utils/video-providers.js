@@ -435,13 +435,16 @@ class VideoProviderRegistry {
   select(requested = 'slideshow', order = DEFAULT_PROVIDER_ORDER, request = {}) {
     if (requested && requested !== 'auto') {
       const provider = this.get(requested);
-      return provider?.isAvailable() ? provider : this.get('slideshow');
+      if (!provider) return null;
+      if (provider.isAvailable()) return provider;
+      return requested === 'slideshow' ? provider : null;
     }
     for (const id of order) {
       const provider = this.get(id);
       if (provider?.isAvailable() && provider.supports(request)) return provider;
     }
-    return this.get('slideshow');
+    const local = this.get('slideshow');
+    return local?.isAvailable() ? local : null;
   }
 }
 

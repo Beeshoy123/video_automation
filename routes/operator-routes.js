@@ -1,8 +1,10 @@
 const path = require('path');
 const fs = require('fs').promises;
 const express = require('express');
+const { PlatformExportService } = require('../utils/platform-export-service');
 
 function registerOperatorRoutes(context) {
+  const platformExports = new PlatformExportService();
   const {
     app,
     db,
@@ -225,32 +227,39 @@ function registerOperatorRoutes(context) {
       const videoPath = bundle.assets?.finalVideo?.path;
       if (!videoPath || path.extname(videoPath).toLowerCase() !== '.mp4') return res.status(409).json({ success: false, error: 'A real MP4 is required before export' });
       await fs.access(videoPath);
-      const outputDir = path.join(__dirname, '..', 'data', 'exports', 'platforms', path.basename(req.params.productionId));
-      await fs.mkdir(outputDir, { recursive: true });
-      const files = {};
-      for (const platform of ['tiktok', 'instagram-reels', 'youtube-shorts']) {
-        const target = path.join(outputDir, `${platform}.mp4`);
-        await fs.copyFile(videoPath, target);
-        files[platform] = path.relative(__dirname, '..', target);
-      }
-      if (bundle.assets?.captions?.path) {
-        const captionsTarget = path.join(outputDir, 'captions.srt');
-        await fs.copyFile(bundle.assets.captions.path, captionsTarget);
-        files.captions = path.relative(__dirname, '..', captionsTarget);
-      }
-      const metadataTarget = path.join(outputDir, 'metadata.json');
-      await fs.writeFile(metadataTarget, JSON.stringify({
-        productionId: bundle.id,
-        title: bundle.seo?.title || bundle.script?.title || bundle.strategy?.topic,
-        description: bundle.seo?.description || '',
-        tags: bundle.seo?.tags || [],
-        aspectRatio: bundle.assets.finalVideo.aspectRatio || null,
-        createdAt: new Date().toISOString()
-      }, null, 2));
-      files.metadata = path.relative(__dirname, '..', metadataTarget);
+      const productionId = path.basename(req.params.productionId);
+      if (!/^[a-zA-Z0-9_-]+$/.test(productionId)) return res.status(400).json({ success: false, error: 'Invalid production ID' });
+      const projectRoot = path.join(__dirname, '..');
+      const outputDir = path.join(projectRoot, 'data', 'exports', 'platforms', productionId);
+      const generatedFiles = await platformExports.export(productionId, bundle, outputDir);
+      const files = Object.fromEntries(Object.entries(generatedFiles).map(([name, filePath]) => [name, path.relative(projectRoot, filePath)]));
       return res.status(201).json({ success: true, result: { productionId: bundle.id, files } });
     } catch (error) {
       return res.status(error.status || 500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.get('/api/content/:productionId/platform-package/:fileName', protect, async (req, res) => {
+    try {
+      const productionId = req.params.productionId;
+      const fileName = req.params.fileName;
+      const allowedFiles = new Set([
+        'tiktok.mp4', 'tiktok.srt',
+        'instagram-reels.mp4', 'instagram-reels.srt',
+        'youtube-shorts.mp4', 'youtube-shorts.srt',
+        'metadata.json'
+      ]);
+      if (!/^[a-zA-Z0-9_-]+$/.test(productionId) || !allowedFiles.has(fileName)) {
+        return res.status(404).json({ success: false, error: 'Platform export file not found' });
+      }
+      const exportDir = path.resolve(__dirname, '..', 'data', 'exports', 'platforms', productionId);
+      const filePath = path.resolve(exportDir, fileName);
+      if (path.dirname(filePath) !== exportDir) return res.status(404).json({ success: false, error: 'Platform export file not found' });
+      const stats = await fs.stat(filePath);
+      if (!stats.isFile()) return res.status(404).json({ success: false, error: 'Platform export file not found' });
+      return res.download(filePath, fileName);
+    } catch (_error) {
+      return res.status(404).json({ success: false, error: 'Platform export file not found' });
     }
   });
 

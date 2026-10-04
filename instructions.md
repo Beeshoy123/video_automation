@@ -1,6 +1,101 @@
 # YouTube Automation Agent Startup Instructions
 
-This guide records the setup verified on 2026-08-22.
+This guide records the setup verified on 2026-08-22 and is intentionally enforced as the default operating instruction for startup, validation, and path-sensitive work in this repository.
+
+## Agent Operating Rules for Startup Environment and Path
+
+- Always operate from the project root: `G:\AI\youtube-automation-agent`.
+- Use PowerShell for Windows commands and prefer the repository-root path before running scripts.
+- For repo entry commands, use either:
+
+```powershell
+cd /d G:\AI\youtube-automation-agent
+```
+
+or:
+
+```powershell
+Set-Location G:\AI\youtube-automation-agent
+```
+
+- Prefer explicit Windows-safe commands, especially:
+
+```powershell
+npm.cmd install
+npm.cmd start
+npm.cmd run walkthrough
+```
+
+- If `npm.ps1` is blocked in PowerShell, do not switch to a different shell or a different repo path; use `npm.cmd` or call Node directly:
+
+```powershell
+node index.js
+```
+
+- If a local Python virtual environment is needed, use the repo-local `.venv` and activate it explicitly:
+
+```powershell
+cd /d G:\AI\youtube-automation-agent
+.\.venv\Scripts\Activate.ps1
+```
+
+- If PowerShell blocks activation, call the interpreter directly instead of inventing a different environment:
+
+```powershell
+G:\AI\youtube-automation-agent\.venv\Scripts\python.exe --version
+```
+
+- Treat `.env` as required local configuration. Never commit secrets, OAuth tokens, or credentials.
+- When starting the app, keep the default local check endpoints in mind:
+
+```text
+http://localhost:3456
+http://localhost:3456/health
+```
+
+- For local-only generation runs, prefer `LOCAL_ONLY_MODE=true` and Gemini-backed text generation unless the user explicitly asks for a different provider path.
+- When video generation requires media tooling, verify FFmpeg is on PATH before claiming the pipeline is healthy.
+- Do not silently fall back to a different provider or a generic local output if a required configured provider is intentionally selected and unavailable.
+- Keep commands path-safe and repo-root-relative. Avoid assuming a different working directory or a different environment after the first startup command.
+
+## Verified Startup Checklist
+
+Use this exact order for a clean startup on this workspace:
+
+1. Install dependencies:
+
+```powershell
+cd /d G:\AI\youtube-automation-agent
+npm.cmd install
+```
+
+2. Configure `.env` before starting the app. At minimum, set a valid `GEMINI_API_KEY` for AI text/TTS support, and optionally set `LOCAL_ONLY_MODE=true` if you want to run without YouTube OAuth.
+
+3. Optionally create and activate the local Python virtual environment if Python tooling is required:
+
+```powershell
+cd /d G:\AI\youtube-automation-agent
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+4. Run the guided setup walkthrough:
+
+```powershell
+cd /d G:\AI\youtube-automation-agent
+npm.cmd run walkthrough
+```
+
+5. Start the dashboard:
+
+```powershell
+cd /d G:\AI\youtube-automation-agent
+npm.cmd start
+```
+
+6. Open the dashboard at `http://localhost:3456` and the health endpoint at `http://localhost:3456/health`.
+
+7. Keep the terminal open while using the dashboard and stop it with `Ctrl+C` when done.
 
 ## Project Type
 
@@ -21,63 +116,26 @@ This is primarily a Node.js project. The browser interface is served by the Expr
 - Git, if pushing the project to GitHub
 - Python 3.9 or newer only if Python tooling is needed. The verified machine has Python 3.9.13.
 
-## Verified Startup Checklist
+## Windows and Setup Notes
 
-Use this exact order for a clean startup on this workspace:
+- Use `npm.cmd`, not `npm`, when PowerShell reports that `npm.ps1` is blocked.
+- Use `python`, not `py`, because the `py` launcher was not installed on the verified machine.
+- The walkthrough command is `npm.cmd run walkthrough`, not a misspelled variant.
+- The repo uses Node dependencies from `package.json`; Python requirements are not currently part of the project.
+- Keep the app root as `G:\AI\youtube-automation-agent` for all startup and diagnostics actions.
 
-1. Install dependencies:
+## Latest Environment Findings
 
-```powershell
-cd G:\AI\youtube-automation-agent
-npm.cmd install
-```
-
-2. Configure local environment values in `.env` before starting the app. At minimum, set a valid `GEMINI_API_KEY` for AI text/TTS support, and optionally set `LOCAL_ONLY_MODE=true` if you want to run without YouTube OAuth.
-
-3. Optionally create and activate the local Python virtual environment if Python tooling is required:
-
-```powershell
-cd G:\AI\youtube-automation-agent
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-If PowerShell blocks the activation script, skip activation and use `./.venv/Scripts/python.exe` directly.
-
-4. Run the guided setup walkthrough:
-
-```powershell
-cd G:\AI\youtube-automation-agent
-npm.cmd run walkthrough
-```
-
-5. Start the dashboard:
-
-```powershell
-cd G:\AI\youtube-automation-agent
-npm.cmd start
-```
-
-If PowerShell still blocks `npm.ps1` or `npm.cmd` is unavailable in a particular shell, start the app directly with:
-
-```powershell
-cd G:\AI\youtube-automation-agent
-node index.js
-```
-
-6. Open the app:
-
-- Dashboard: `http://localhost:3456`
-- Health check: `http://localhost:3456/health`
-
-7. Leave the terminal running while using the dashboard. Stop the server with `Ctrl+C`.
+- Gemini is the expected default provider for local text generation unless the user explicitly asks for another provider path.
+- Local-only mode is valid when YouTube OAuth is not configured.
+- The project is intentionally a Windows-local startup environment; commands should reflect that path and shell behavior rather than generic Linux-style defaults.
 
 ## Install Node Dependencies
 
 PowerShell may block `npm.ps1`. Use `npm.cmd` instead:
 
 ```powershell
-cd C:\Users\HP\youtube-automation-agent
+cd /d G:\AI\youtube-automation-agent
 npm.cmd install
 ```
 
@@ -90,7 +148,7 @@ The project currently installs Node dependencies, not Python dependencies. There
 A Python virtual environment was created at `.venv`:
 
 ```powershell
-cd C:\Users\HP\youtube-automation-agent
+cd /d G:\AI\youtube-automation-agent
 python -m venv .venv
 ```
 
@@ -147,7 +205,7 @@ The walkthrough saves progress and can be rerun at any time. To enable YouTube u
 ## Start the Dashboard
 
 ```powershell
-cd C:\Users\HP\youtube-automation-agent
+cd /d G:\AI\youtube-automation-agent
 npm.cmd start
 ```
 
@@ -155,7 +213,7 @@ Open:
 
 `http://localhost:3456`
 
-The dashboard starts in setup mode until valid AI and YouTube credentials are configured. In the current implementation, the `Create video` button stays disabled while `setupRequired` is true, so YouTube OAuth is required even when using the local slideshow provider.
+The setup gate depends on the configured providers and run mode. With `LOCAL_ONLY_MODE=true`, local generation can run without YouTube OAuth; uploading and publishing to YouTube still require connecting the channel.
 
 Useful URLs:
 
@@ -169,7 +227,7 @@ Leave the terminal running while using the dashboard. Stop the server with `Ctrl
 The existing remote was originally the upstream repository. To connect this local checkout to the new repository:
 
 ```powershell
-cd C:\Users\HP\youtube-automation-agent
+cd /d G:\AI\youtube-automation-agent
 git remote set-url origin https://github.com/Beeshoy123/video_automation.git
 git branch -M main
 git add -A

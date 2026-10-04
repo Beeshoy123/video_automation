@@ -75,6 +75,12 @@ class MediaGenerationService {
       generateAudio: settings.generateAudio
     };
     const provider = this.registry.select(settings.provider, settings.order, routingRequest);
+    if (!provider) {
+      if (settings.provider === 'slideshow' || settings.mode === 'slideshow' || settings.maxGeneratedSeconds === 0) {
+        return { clips: [], requestedProvider: settings.provider, actualProvider: 'slideshow', model: 'local-ffmpeg', settings };
+      }
+      throw new Error(`Selected video provider "${settings.provider}" is not configured. Set VIDEO_PROVIDER=slideshow or configure the provider credentials.`);
+    }
     const providerInfo = provider.describe();
     if (provider.id === 'slideshow' || settings.mode === 'slideshow' || settings.maxGeneratedSeconds === 0) {
       return { clips: [], requestedProvider: settings.provider, actualProvider: 'slideshow', model: 'local-ffmpeg', settings };
@@ -107,11 +113,10 @@ class MediaGenerationService {
       }
     } catch (error) {
       if (provider.id !== 'slideshow') {
-        this.logger.warn(`${provider.id} failed; falling back to local slideshow: ${safeModelError(error)}`);
-        return {
-          clips: [], requestedProvider: settings.provider, actualProvider: 'slideshow',
-          model: 'local-ffmpeg', fallbackFrom: provider.id, fallbackReason: safeModelError(error), settings
-        };
+        const reason = safeModelError(error);
+        const message = `Selected video provider "${provider.id}" failed and slideshow fallback is disabled. Configure the provider or set VIDEO_PROVIDER=slideshow. Original error: ${reason}`;
+        this.logger.error(message);
+        throw new Error(message);
       }
       throw error;
     }

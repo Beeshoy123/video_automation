@@ -718,9 +718,9 @@ function populateSettings(profile = {}, settings = {}, providers = []) {
   }
   const selected = providers.find(provider => provider.id === videoMapping.videoProvider);
   $('#video-provider-status').textContent = videoMapping.videoProvider === 'auto'
-    ? `${providers.filter(provider => provider.available && provider.id !== 'slideshow').length} paid provider(s) available; local slideshow remains the final fallback.`
-    : videoMapping.videoProvider === 'slideshow' ? 'Local FFmpeg slideshow is selected; no external video credentials are required.'
-      : selected?.available ? `${label(selected.id)} is configured (${selected.model}).` : `${label(videoMapping.videoProvider)} credentials are not configured.`;
+    ? `${providers.filter(provider => provider.available && provider.id !== 'slideshow').length} paid provider(s) available; auto-routing will prefer paid providers, while explicit slideshow stays as a deliberate local mode.`
+    : videoMapping.videoProvider === 'slideshow' ? 'Local FFmpeg slideshow is selected intentionally; no external video credentials are required, and provider failures will not be silently replaced.'
+      : selected?.available ? `${label(selected.id)} is configured (${selected.model}). Provider failures are now fail-loud rather than silently switching to slideshow.` : `${label(videoMapping.videoProvider)} credentials are not configured.`;
   renderProviderGuidance(providers, videoMapping.videoProvider);
 }
 
@@ -737,7 +737,7 @@ function renderProviderGuidance(providers = [], selectedId = 'slideshow') {
   const container = $('#video-provider-guidance');
   if (!container) return;
   const entries = providers.length ? providers : [{ id: 'slideshow', model: 'local-ffmpeg', available: true, capabilities: {} }];
-  container.innerHTML = `<div class="provider-guidance-heading"><div><p class="eyebrow">CHOOSE YOUR ENGINE</p><strong>Match the provider to the job</strong></div><span class="provider-guidance-note">Cards reflect the current local configuration.</span></div><div class="provider-card-grid">${entries.map(provider => {
+  container.innerHTML = `<div class="provider-guidance-heading"><div><p class="eyebrow">CHOOSE YOUR ENGINE</p><strong>Match the provider to the job</strong></div><span class="provider-guidance-note">Cards reflect the current local configuration. Slideshow is an explicit local mode, not a silent backup.</span></div><div class="provider-card-grid">${entries.map(provider => {
     const capabilities = provider.capabilities || {};
     const isLocal = provider.id === 'slideshow';
     const available = isLocal || provider.available;
@@ -1280,6 +1280,50 @@ async function mutate(url, method, body, successMessage, requestOptions = {}) {
   }
 }
 
+function showPlatformPackageDownloads(productionId, files) {
+  const form = $('#content-review-form');
+  const decisionPanel = form?.querySelector('.review-decision-panel');
+  if (!decisionPanel) return;
+  const assets = [
+    ['tiktok', 'tiktok.mp4', 'TikTok video'],
+    ['tiktokCaptions', 'tiktok.srt', 'TikTok captions'],
+    ['instagram-reels', 'instagram-reels.mp4', 'Instagram Reels video'],
+    ['instagram-reelsCaptions', 'instagram-reels.srt', 'Instagram Reels captions'],
+    ['youtube-shorts', 'youtube-shorts.mp4', 'YouTube Shorts video'],
+    ['youtube-shortsCaptions', 'youtube-shorts.srt', 'YouTube Shorts captions'],
+    ['metadata', 'metadata.json', 'Platform metadata']
+  ];
+  const filenames = assets.filter(([key]) => files[key]).map(([, fileName, labelText]) => [fileName, labelText]);
+  let panel = form.querySelector('.platform-export-results');
+  if (!panel) {
+    panel = document.createElement('section');
+    panel.className = 'panel platform-export-results';
+    decisionPanel.insertAdjacentElement('afterend', panel);
+  }
+  panel.innerHTML = `
+    <div class="panel-heading"><div><p class="eyebrow">EXPORT READY</p><h3>Platform files</h3><p>Download the videos, captions, and upload metadata.</p></div></div>
+    <div class="form-actions">${filenames.map(([fileName, labelText]) => `<button type="button" class="button secondary" data-download-platform-export="${escapeHTML(fileName)}" data-production-id="${escapeHTML(productionId)}">${escapeHTML(labelText)}</button>`).join('')}</div>`;
+}
+
+async function downloadPlatformExport(productionId, fileName) {
+  const url = `/api/content/${encodeURIComponent(productionId)}/platform-package/${encodeURIComponent(fileName)}`;
+  const fetchFile = key => fetch(url, { headers: key ? { 'x-api-key': key } : {} });
+  let response = await fetchFile(apiKey());
+  if (response.status === 401 && requestApiKey() !== null) response = await fetchFile(apiKey());
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Could not download the platform export');
+  }
+  const objectUrl = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
 document.addEventListener('click', async event => {
   const useNiche = event.target.closest('[data-use-niche]');
   if (useNiche) {
@@ -1462,9 +1506,22 @@ document.addEventListener('click', async event => {
     return openContent(open.dataset.openContent);
   }
 
+  const exportDownload = event.target.closest('[data-download-platform-export]');
+  if (exportDownload) {
+    downloadPlatformExport(exportDownload.dataset.productionId, exportDownload.dataset.downloadPlatformExport)
+      .catch(error => showToast(error.message, 'error'));
+    return;
+  }
+
   const platformPackage = event.target.closest('[data-platform-package]');
   if (platformPackage) {
-    await mutate(`/api/content/${encodeURIComponent(platformPackage.dataset.platformPackage)}/platform-package`, 'POST', {}, 'Platform package exported.').catch(() => {});
+    const productionId = platformPackage.dataset.platformPackage;
+    try {
+      const response = await mutate(`/api/content/${encodeURIComponent(productionId)}/platform-package`, 'POST', {}, 'Platform exports are ready to download.');
+      showPlatformPackageDownloads(productionId, response.result.files);
+    } catch (_error) {
+      // Mutate already shows the error toast.
+    }
     return;
   }
 

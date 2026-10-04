@@ -272,6 +272,26 @@ main { padding: 0 3.2vw 72px; min-width: 0; }
 .overview-grid { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; margin-bottom: 16px; }
 .overview-grid.lower { grid-template-columns: 1fr 1fr; }
 .panel { padding: 22px; }
+.command-palette-trigger { flex: 0 0 42px; }
+.command-palette-dialog { width: min(620px, calc(100vw - 28px)); padding: 16px; }
+.command-palette-heading, .command-palette-search, .command-palette-footer { display: flex; align-items: center; gap: 12px; }
+.command-palette-heading { justify-content: space-between; padding: 3px 4px 14px; }
+.command-palette-heading h2 { font-size: 18px; }
+.command-palette-search { min-height: 48px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(0,0,0,.16); color: var(--muted); }
+.command-palette-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; }
+.command-palette-search kbd, .command-palette-heading kbd, .command-palette-footer { color: var(--muted); font-size: 10px; }
+.command-palette-list { max-height: min(54vh, 430px); overflow-y: auto; padding: 8px 0; }
+.command-palette-group { margin: 8px 8px 4px; color: var(--muted); font-size: 10px; text-transform: uppercase; }
+.command-palette-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 10px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.command-palette-row:hover, .command-palette-row[aria-selected="true"] { border-color: var(--line); background: var(--panel-soft); }
+.command-palette-row small, .command-palette-empty { color: var(--muted); }
+.command-palette-empty { padding: 18px 10px; text-align: center; }
+.command-palette-footer { flex-wrap: wrap; justify-content: flex-start; gap: 6px 14px; padding: 8px 4px 0; border-top: 1px solid var(--line); }
+.view[data-view-enter="true"] { animation: dashboard-view-enter .24s ease both; }
+@keyframes dashboard-view-enter { from { opacity: .7; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .view[data-view-enter="true"] { animation: none; } }
+.platform-export-results { margin-top: 12px; }
+.platform-export-results .form-actions { flex-wrap: wrap; }
 .panel-heading, .split-heading, .section-intro { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .panel-heading { margin-bottom: 18px; }
 .panel-heading h2 { font-size: 18px; }

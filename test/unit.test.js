@@ -9,6 +9,11 @@ const { buildConfig, migrateConfig } = require('../utils/config-schema');
 const { VoiceProviderRegistry } = require('../utils/voice-providers');
 const { CaptionService } = require('../utils/caption-service');
 const { FacelessStockEngine } = require('../utils/faceless-stock-engine');
+const { ScriptWriterAgent } = require('../agents/script-writer-agent');
+const { MediaGenerationService } = require('../utils/media-generation-service');
+const { AIVideoGenerator } = require('../utils/ai-video-generator');
+const { PlatformExportService } = require('../utils/platform-export-service');
+const { checkFFmpeg, runFFmpeg } = require('../utils/ffmpeg');
 
 test('TaskManager runs jobs in concurrency order', async () => {
   const manager = new TaskManager({ maxConcurrent: 1, maxQueued: 2 });
@@ -59,6 +64,48 @@ test('CaptionService falls back when speech transcription fails', async () => {
   assert.match(await fs.readFile(outputPath, 'utf8'), /Fallback/);
 });
 
+test('ScriptWriterAgent fails loudly when no AI provider is configured', async () => {
+  const agent = new ScriptWriterAgent({ saveScript: async () => {} }, {});
+  const strategy = {
+    topic: 'best budget desk setups',
+    contentType: 'List',
+    angle: 'simple affordable steps',
+    targetAudience: 'remote workers',
+    keywords: ['desk', 'workspace', 'budget'],
+    requestedLength: '6-8 minutes'
+  };
+
+  await assert.rejects(
+    () => agent.generateScript(strategy),
+    /No AI text provider configured for script generation/
+  );
+});
+
+test('MediaGenerationService refuses silent slideshow fallback when a paid provider is selected', async () => {
+  const service = new MediaGenerationService(
+    { getAllSettings: async () => ({ video_provider: 'seedance', video_generation_mode: 'hybrid' }) },
+    {},
+    {
+      registry: {
+        select: () => null,
+        list: () => []
+      },
+      logger: { warn() {}, info() {}, error() {} }
+    }
+  );
+
+  await assert.rejects(
+    () => service.generateClips({
+      jobId: 'job-1',
+      productionId: 'prod-1',
+      script: { title: 'Desk setup guide' },
+      visualAssets: [],
+      outputDir: os.tmpdir()
+    }),
+    /Selected video provider "seedance" is not configured/
+  );
+});
+
 test('FacelessStockEngine ranks portrait clips ahead of landscape results', () => {
   const engine = new FacelessStockEngine({}, { logger: { warn() {}, info() {}, error() {} } });
   const ranked = engine.rankVideoCandidates([
@@ -68,4 +115,103 @@ test('FacelessStockEngine ranks portrait clips ahead of landscape results', () =
   ]);
 
   assert.deepEqual(ranked.map(item => item.assetId), ['portrait-long', 'portrait', 'landscape']);
+});
+
+test('AIVideoGenerator slideshow HTML is minimal and avoids the old spammy text overlay', () => {
+  const generator = new AIVideoGenerator({}, { logger: { warn() {}, info() {}, error() {} } });
+  const html = generator.createSlideshowHTML({
+    title: 'Desk setup guide',
+    hook: { text: 'A better workspace starts with a smarter layout.' },
+    mainContent: {
+      sections: [{ title: 'Pick your desk', content: 'Pick a desk near a window and make sure it supports a clean, ergonomic setup.' }]
+    }
+  }, ['/tmp/image-1.png']);
+
+  assert.match(html, /Desk setup guide/);
+  assert.doesNotMatch(html, /Subscribe for More Stories/);
+  assert.doesNotMatch(html, /Pick a desk near a window and make sure it supports a clean, ergonomic setup\./);
+  assert.doesNotMatch(html, /make sure it supports a clean, ergonomic setup/i);
+  assert.match(html, /Scene 1/);
+});
+
+test('AIVideoGenerator compresses slide text to a short key phrase instead of full script sentences', () => {
+  const generator = new AIVideoGenerator({}, { logger: { warn() {}, info() {}, error() {} } });
+  const html = generator.createSlideshowHTML({
+    title: 'Desk setup guide',
+    hook: { text: 'A better workspace starts with a smarter layout and a calmer workflow for focused work.' },
+    mainContent: {
+      sections: [{ title: 'Pick your desk', content: 'Pick a desk near a window and make sure it supports a clean, ergonomic setup.' }]
+    }
+  }, ['/tmp/image-1.png']);
+
+  assert.match(html, /A better workspace starts/i);
+  assert.doesNotMatch(html, /A better workspace starts with a smarter layout and a calmer workflow for focused work\./i);
+  assert.doesNotMatch(html, /Pick a desk near a window and make sure it supports a clean, ergonomic setup\./i);
+});
+
+test('AIVideoGenerator chooses portrait-safe crop positioning for tall assets', () => {
+  const generator = new AIVideoGenerator({}, { logger: { warn() {}, info() {}, error() {} } });
+  const html = generator.createSlideshowHTML({
+    title: 'Desk setup guide',
+    hook: { text: 'A cleaner desk changes your energy.' },
+    mainContent: {
+      sections: [{ title: 'Pick your desk', content: 'Keep your desk clear and well-lit.' }]
+    }
+  }, ['/tmp/portrait-hero.jpg']);
+
+  assert.match(html, /object-position: 50% 22%/i);
+  assert.match(html, /transform: scale\(1\.08\)/i);
+});
+
+test('AIVideoGenerator adds subtle motion to slideshow stills for a more cinematic cadence', () => {
+  const generator = new AIVideoGenerator({}, { logger: { warn() {}, info() {}, error() {} } });
+  const html = generator.createSlideshowHTML({
+    title: 'Desk setup guide',
+    hook: { text: 'A cleaner desk changes your energy.' },
+    mainContent: {
+      sections: [{ title: 'Pick your desk', content: 'Keep your desk clear and well-lit.' }]
+    }
+  }, ['/tmp/portrait-hero.jpg']);
+
+  assert.match(html, /gentlePan|animation: gentlePan/i);
+});
+
+test('PlatformExportService renders valid platform-specific vertical videos and metadata', async t => {
+  if (!await checkFFmpeg()) {
+    t.skip('FFmpeg is unavailable');
+    return;
+  }
+
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-platform-export-'));
+  const sourcePath = path.join(directory, 'source.mp4');
+  const captionsPath = path.join(directory, 'source.srt');
+  const outputDir = path.join(directory, 'exports');
+  await runFFmpeg([
+    '-y', '-f', 'lavfi', '-i', 'testsrc=size=320x180:rate=10:duration=1',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-shortest',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', sourcePath
+  ]);
+  await fs.writeFile(captionsPath, '1\n00:00:00,000 --> 00:00:01,000\nTest caption\n', 'utf8');
+
+  const service = new PlatformExportService({ width: 180, height: 320 });
+  const files = await service.export('prod-test', {
+    assets: { finalVideo: { path: sourcePath, aspectRatio: '16:9' }, captions: { path: captionsPath } },
+    editorData: { title: 'A useful video' },
+    seo: { description: 'A short description.', tags: ['video', 'tips'] }
+  }, outputDir);
+
+  for (const platform of ['tiktok', 'instagram-reels', 'youtube-shorts']) {
+    const stats = await fs.stat(files[platform]);
+    assert.ok(stats.size > 0, `${platform} output should contain a rendered MP4`);
+    assert.ok((await fs.stat(files[`${platform}Captions`])).size > 0, `${platform} captions should be copied`);
+  }
+  const metadata = JSON.parse(await fs.readFile(files.metadata, 'utf8'));
+  assert.equal(metadata.aspectRatio, '9:16');
+  assert.deepEqual(
+    ['tiktok', 'instagram-reels', 'youtube-shorts'].map(platform => metadata.platforms[platform].layout),
+    ['crop', 'blur', 'stacked']
+  );
+  assert.match(metadata.platforms.tiktok.caption, /#video/);
+  assert.match(metadata.platforms['instagram-reels'].caption, /A short description\./);
+  assert.match(metadata.platforms['youtube-shorts'].title, /#Shorts/);
 });

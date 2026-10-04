@@ -41,6 +41,39 @@ npm start
 
 Open `http://localhost:3456`. The walkthrough explains each provider choice, tests credentials, and guides YouTube authorization.
 
+### Windows PowerShell startup
+
+For the verified Windows workspace, run commands from the repository root. If you already have this checkout at `G:\AI\youtube-automation-agent`:
+
+```powershell
+Set-Location G:\AI\youtube-automation-agent
+npm.cmd install
+```
+
+Configure `.env` with the provider credentials you intend to use. Gemini text generation requires a valid `GEMINI_API_KEY`; set `LOCAL_ONLY_MODE=true` to use local generation without YouTube OAuth. Then run the guided setup and start the dashboard:
+
+```powershell
+npm.cmd run walkthrough
+npm.cmd start
+```
+
+Open `http://localhost:3456`; check `http://localhost:3456/health` for server status. Keep the PowerShell window running and stop the server with `Ctrl+C`. Use `npm.cmd` when PowerShell blocks the `npm.ps1` script.
+
+Before rendering videos, verify FFmpeg is available with `ffmpeg -version`. The HTML slideshow renderer also requires Playwright's Chromium browser; install it from the repository root with:
+
+```powershell
+npx.cmd playwright install chromium
+```
+
+Python is optional and only needed for Python tooling. If needed, use the repository-local virtual environment; if PowerShell blocks activation, invoke its interpreter directly:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+# Or, without activation:
+.\.venv\Scripts\python.exe --version
+```
+
 The same generation workflow is available from the CLI while the app is running:
 
 ```bash

@@ -50,10 +50,12 @@ class ScriptWriterAgent {
     };
   }
 
-  async generateScript(strategy) {
+  async generateScript(strategy, options = {}) {
+    const allowTemplateFallback = Boolean(options.allowTemplateFallback);
+
     try {
       this.logger.info(`Generating script for: ${strategy.topic}`);
-      
+
       const template = this.templates[strategy.contentType.toLowerCase()] || this.templates.explainer;
       const aiScript = await this.generateScriptWithAI(strategy, template);
       if (aiScript) {
@@ -62,7 +64,11 @@ class ScriptWriterAgent {
         this.logger.info(`Script generated with AI provider: ${aiScript.title}`);
         return aiScript;
       }
-      
+
+      if (!allowTemplateFallback) {
+        throw new Error('No AI text provider configured for script generation. Configure GEMINI_API_KEY or another AI provider before generating production scripts.');
+      }
+
       this.logger.info('Using template script generation');
       // Generate script components
       const hook = await this.generateHook(strategy);
@@ -107,8 +113,9 @@ class ScriptWriterAgent {
 
   async generateScriptWithAI(strategy, template) {
     if (!this.aiTextService.isAvailable()) {
-      this.logger.info('Using template script generation because no AI text provider is configured');
-      return null;
+      const message = 'No AI text provider configured for script generation. Configure GEMINI_API_KEY or another AI provider before generating production scripts.';
+      this.logger.error(message);
+      throw new Error(message);
     }
 
     const prompt = `You are writing a YouTube script plan.
